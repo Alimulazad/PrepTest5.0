@@ -404,8 +404,8 @@ export const migrations: Migration[] = [
         ON CONFLICT (id) DO NOTHING;
 
         -- Insert missing chapters referenced by topics
-        INSERT INTO chapters (id, subject_id, name, bangla_name, created_at)
-        SELECT DISTINCT t.chapter_id, COALESCE(t.subject_id, 'physics_1'), t.chapter_id, t.chapter_id, EXTRACT(EPOCH FROM NOW()) * 1000
+        INSERT INTO chapters (id, subject_id, chapter_no, name, bangla_name, paper, created_at)
+        SELECT DISTINCT t.chapter_id, COALESCE(t.subject_id, 'physics_1'), 0, t.chapter_id, t.chapter_id, '1st', EXTRACT(EPOCH FROM NOW()) * 1000
         FROM topics t
         LEFT JOIN chapters c ON t.chapter_id = c.id
         WHERE c.id IS NULL AND t.chapter_id IS NOT NULL AND t.chapter_id <> ''
