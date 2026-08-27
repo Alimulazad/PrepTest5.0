@@ -954,6 +954,37 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    id: '011_import_jobs',
+    name: 'Create import_jobs table for background job processing and progress tracking',
+    up: async (client: pg.PoolClient) => {
+      logger.info('[Migration 011] Creating import_jobs table...');
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS import_jobs (
+          id VARCHAR(255) PRIMARY KEY,
+          type VARCHAR(50) NOT NULL DEFAULT 'questions',
+          status VARCHAR(50) NOT NULL DEFAULT 'pending',
+          total_rows INT NOT NULL DEFAULT 0,
+          processed_rows INT NOT NULL DEFAULT 0,
+          successful_rows INT NOT NULL DEFAULT 0,
+          failed_rows INT NOT NULL DEFAULT 0,
+          batch_id VARCHAR(255),
+          errors TEXT,
+          created_at BIGINT NOT NULL,
+          updated_at BIGINT NOT NULL,
+          completed_at BIGINT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_import_jobs_status ON import_jobs(status);
+        CREATE INDEX IF NOT EXISTS idx_import_jobs_created_at ON import_jobs(created_at DESC);
+      `);
+      logger.info('[Migration 011] ✅ import_jobs table created successfully.');
+    },
+    down: async (client: pg.PoolClient) => {
+      logger.info('[Migration 011] Rolling back import_jobs table...');
+      await client.query(`DROP TABLE IF EXISTS import_jobs CASCADE;`);
+    },
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

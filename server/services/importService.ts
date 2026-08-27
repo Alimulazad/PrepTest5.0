@@ -915,3 +915,349 @@ export async function rollbackImportBatch(
     message: `মেমোরি থেকে ব্যাচ '${batchId}' রোলব্যাক করা হয়েছে (${deletedMcqCount} প্রশ্ন ডিলিট)`,
   };
 }
+
+export interface ImportJobStatus {
+  id: string;
+  type: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  totalRows: number;
+  processedRows: number;
+  successfulRows: number;
+  failedRows: number;
+  batchId: string;
+  errors?: string[];
+  createdAt: number;
+  updatedAt: number;
+  completedAt?: number;
+}
+
+const inMemoryJobs = new Map<string, ImportJobStatus>();
+
+export async function getImportJobStatus(jobId: string): Promise<ImportJobStatus | null> {
+  const activePool = getPgPool();
+  if (isPostgresActive() && activePool) {
+    try {
+      const res = await activePool.query('SELECT * FROM import_jobs WHERE id = $1', [jobId]);
+      if (res.rows.length > 0) {
+        const row = res.rows[0];
+        let errs: string[] = [];
+        if (row.errors) {
+          try {
+            errs = JSON.parse(row.errors);
+          } catch {}
+        }
+        return {
+          id: row.id,
+          type: row.type,
+          status: row.status,
+          totalRows: row.total_rows,
+          processedRows: row.processed_rows,
+          successfulRows: row.successful_rows,
+          failedRows: row.failed_rows,
+          batchId: row.batch_id,
+          errors: errs,
+          createdAt: Number(row.created_at),
+          updatedAt: Number(row.updated_at),
+          completedAt: row.completed_at ? Number(row.completed_at) : undefined,
+        };
+      }
+    } catch (err: any) {
+      logger.error(`[ImportJob] Error getting job status ${jobId}: ${err.message}`);
+    }
+  }
+  return inMemoryJobs.get(jobId) || null;
+}
+
+export async function enqueueQuestionsImportJob(
+  questions: RawImportRow[],
+  createTaxonomy: any[] = []
+): Promise<{ jobId: string; batchId: string; status: string; totalRows: number }> {
+  const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const batchId = `batch_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const now = Date.now();
+  const totalRows = questions.length;
+
+  const initialJob: ImportJobStatus = {
+    id: jobId,
+    type: 'questions',
+    status: 'pending',
+    totalRows,
+    processedRows: 0,
+    successfulRows: 0,
+    failedRows: 0,
+    batchId,
+    errors: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  inMemoryJobs.set(jobId, initialJob);
+
+  const activePool = getPgPool();
+  if (isPostgresActive() && activePool) {
+    try {
+      await activePool.query(
+        `INSERT INTO import_jobs (id, type, status, total_rows, processed_rows, successful_rows, failed_rows, batch_id, errors, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [jobId, 'questions', 'pending', totalRows, 0, 0, 0, batchId, '[]', now, now]
+      );
+    } catch (err: any) {
+      logger.error(`[ImportJob] Error inserting job into Postgres: ${err.message}`);
+    }
+  }
+
+  setImmediate(() => {
+    runQuestionsImportJobWorker(jobId, batchId, questions, createTaxonomy).catch((err) => {
+      logger.error(`[ImportJobWorker] Unhandled error in background worker for job ${jobId}: ${err.message}`);
+    });
+  });
+
+  return { jobId, batchId, status: 'pending', totalRows };
+}
+
+async function runQuestionsImportJobWorker(
+  jobId: string,
+  batchId: string,
+  questions: RawImportRow[],
+  createTaxonomy: any[] = []
+) {
+  const activePool = getPgPool();
+  let processedRows = 0;
+  let successfulRows = 0;
+  let failedRows = 0;
+  const errorsList: string[] = [];
+
+  const updateJobProgress = async (
+    status: 'processing' | 'completed' | 'failed',
+    pRows: number,
+    sRows: number,
+    fRows: number,
+    errorsArr: string[] = [],
+    completedAt?: number
+  ) => {
+    const now = Date.now();
+    const memJob = inMemoryJobs.get(jobId);
+    if (memJob) {
+      memJob.status = status;
+      memJob.processedRows = pRows;
+      memJob.successfulRows = sRows;
+      memJob.failedRows = fRows;
+      memJob.errors = errorsArr;
+      memJob.updatedAt = now;
+      if (completedAt) memJob.completedAt = completedAt;
+    }
+
+    if (isPostgresActive() && activePool) {
+      try {
+        await activePool.query(
+          `UPDATE import_jobs
+           SET status = $1, processed_rows = $2, successful_rows = $3, failed_rows = $4, errors = $5, updated_at = $6, completed_at = $7
+           WHERE id = $8`,
+          [status, pRows, sRows, fRows, JSON.stringify(errorsArr), now, completedAt || null, jobId]
+        );
+      } catch (err: any) {
+        logger.error(`[ImportJobWorker] Failed updating job status in DB: ${err.message}`);
+      }
+    }
+  };
+
+  try {
+    await updateJobProgress('processing', 0, 0, 0);
+
+    // 1. Process Taxonomy Creation if any
+    let createdTaxonomyCount = 0;
+    if (createTaxonomy.length > 0 && isPostgresActive() && activePool) {
+      const client = await activePool.connect();
+      try {
+        await client.query('BEGIN');
+        for (const item of createTaxonomy) {
+          if (item.type === 'chapter') {
+            const chapId = item.id || generateChapterId(item.subject_id, undefined, item.bangla_name || item.name);
+            await client.query(
+              `INSERT INTO chapters (id, subject_id, name, bangla_name, chapter_number)
+               VALUES ($1, $2, $3, $4, $5)
+               ON CONFLICT (id) DO NOTHING`,
+              [chapId, item.subject_id || 'physics_1', item.name || 'Chapter', item.bangla_name || item.name || 'অধ্যায়', Number(item.chapter_number) || 1]
+            );
+            createdTaxonomyCount++;
+          } else if (item.type === 'topic') {
+            const topId = item.id || item.topic_code || `top_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+            await client.query(
+              `INSERT INTO topics (id, chapter_id, name, bangla_name, topic_code, serial_no)
+               VALUES ($1, $2, $3, $4, $5, $6)
+               ON CONFLICT (id) DO NOTHING`,
+              [topId, item.chapter_id || 'phy1_ch1', item.name || 'Topic', item.bangla_name || item.name || 'টপিক', topId, Number(item.serial_no) || 1]
+            );
+            createdTaxonomyCount++;
+          }
+        }
+        await client.query('COMMIT');
+      } catch (taxErr: any) {
+        await client.query('ROLLBACK');
+        logger.error(`[ImportJobWorker] Taxonomy creation error: ${taxErr.message}`);
+      } finally {
+        client.release();
+      }
+    }
+
+    // 2. Process Questions in Chunks of 500
+    const CHUNK_SIZE = 500;
+
+    const upsertQuestionSql = `
+      INSERT INTO questions (
+        id, subject_id, subject_name, paper, chapter_id, chapter_name,
+        topic_id, topic_name, category, question_text, math_formula_latex,
+        options, correct_ans, explanation, explanation_latex,
+        question_image_url, explanation_image_url,
+        tags, star_rating, type, difficulty, created_at, import_batch_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+      ON CONFLICT (id) DO UPDATE SET
+        subject_id = EXCLUDED.subject_id,
+        subject_name = EXCLUDED.subject_name,
+        paper = EXCLUDED.paper,
+        chapter_id = EXCLUDED.chapter_id,
+        chapter_name = EXCLUDED.chapter_name,
+        topic_id = EXCLUDED.topic_id,
+        topic_name = EXCLUDED.topic_name,
+        category = EXCLUDED.category,
+        question_text = EXCLUDED.question_text,
+        math_formula_latex = EXCLUDED.math_formula_latex,
+        options = EXCLUDED.options,
+        correct_ans = EXCLUDED.correct_ans,
+        explanation = EXCLUDED.explanation,
+        explanation_latex = EXCLUDED.explanation_latex,
+        question_image_url = EXCLUDED.question_image_url,
+        explanation_image_url = EXCLUDED.explanation_image_url,
+        tags = EXCLUDED.tags,
+        star_rating = EXCLUDED.star_rating,
+        type = EXCLUDED.type,
+        difficulty = EXCLUDED.difficulty,
+        import_batch_id = EXCLUDED.import_batch_id;
+    `;
+
+    for (let i = 0; i < questions.length; i += CHUNK_SIZE) {
+      const chunk = questions.slice(i, i + CHUNK_SIZE);
+      if (isPostgresActive() && activePool) {
+        const client = await activePool.connect();
+        try {
+          await client.query('BEGIN');
+          for (const q of chunk) {
+            let optionsObj: { A: string; B: string; C: string; D: string; [key: string]: string } = {
+              A: '', B: '', C: '', D: '',
+            };
+
+            if (Array.isArray(q.options)) {
+              for (const opt of q.options) {
+                if (opt) {
+                  const key = opt.id || opt.label || 'A';
+                  optionsObj[key] = opt.text ?? opt.value ?? '';
+                }
+              }
+            } else if (q.options && typeof q.options === 'object') {
+              optionsObj = { ...optionsObj, ...q.options };
+            }
+
+            let tagsArr: string[] = [];
+            if (Array.isArray(q.tags)) {
+              tagsArr = q.tags.map((t: any) => String(t));
+            } else if (typeof q.tags === 'string' && q.tags.trim()) {
+              tagsArr = q.tags.split(',').map((t) => t.trim()).filter(Boolean);
+            }
+
+            const questionId = q.id || `q_${q.subject_id || 'phy'}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+            const paperStr = q.paper === 2 || q.paper === '2' || q.paper === '2nd' ? '2nd' : '1st';
+
+            await client.query(upsertQuestionSql, [
+              questionId,
+              q.subject_id || 'physics_1',
+              q.subject_name || 'পদার্থবিজ্ঞান ১ম পত্র',
+              paperStr,
+              q.chapter_id || 'phy1_ch1',
+              q.chapter_name || 'অধ্যায়',
+              q.topic_id || null,
+              q.topic_name || null,
+              q.category || 'varsity_a',
+              (q.question_text || q.questionText || q.question || '').trim(),
+              q.math_formula_latex || null,
+              JSON.stringify(optionsObj),
+              (q.correct_ans || q.correctAnswer || q.ans || 'A').trim().toUpperCase(),
+              q.explanation || q.solution || '',
+              q.explanation_latex || null,
+              q.question_image_url || null,
+              q.explanation_image_url || null,
+              JSON.stringify(tagsArr),
+              Math.min(3, Math.max(1, Number(q.star_rating) || 3)),
+              q.type || 'mcq',
+              q.difficulty || 'medium',
+              Date.now(),
+              batchId,
+            ]);
+          }
+          await client.query('COMMIT');
+          successfulRows += chunk.length;
+        } catch (chunkErr: any) {
+          await client.query('ROLLBACK');
+          failedRows += chunk.length;
+          errorsList.push(`Chunk ${Math.floor(i / CHUNK_SIZE) + 1} failed: ${chunkErr.message}`);
+          logger.error(`[ImportJobWorker] Chunk error: ${chunkErr.message}`);
+        } finally {
+          client.release();
+        }
+      } else {
+        for (const q of chunk) {
+          const qId = q.id || `q_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+          memoryStore.questions.set(qId, { ...q, id: qId, import_batch_id: batchId } as any);
+          successfulRows++;
+        }
+      }
+
+      processedRows += chunk.length;
+      await updateJobProgress('processing', processedRows, successfulRows, failedRows, errorsList);
+    }
+
+    if (isPostgresActive() && activePool) {
+      const client = await activePool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(`
+          UPDATE topics t
+          SET 
+            mcq_count = (SELECT COUNT(*)::int FROM questions q WHERE q.topic_id = t.id),
+            written_count = (SELECT COUNT(*)::int FROM written_questions w WHERE w.topic_id = t.id),
+            total_questions = (SELECT COUNT(*)::int FROM questions q WHERE q.topic_id = t.id) + (SELECT COUNT(*)::int FROM written_questions w WHERE w.topic_id = t.id);
+
+          UPDATE chapters c
+          SET total_topics = (SELECT COUNT(*)::int FROM topics t WHERE t.chapter_id = c.id);
+        `);
+
+        const auditId = `audit_job_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        await client.query(
+          `INSERT INTO taxonomy_audit_logs (id, action, entity_type, entity_id, details, performed_by, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            auditId,
+            'async_import_job_completed',
+            'import_job',
+            jobId,
+            JSON.stringify({ jobId, batchId, totalRows: questions.length, successfulRows, failedRows }),
+            'admin',
+            Date.now(),
+          ]
+        );
+        await client.query('COMMIT');
+      } catch (cntErr: any) {
+        await client.query('ROLLBACK');
+        logger.error(`[ImportJobWorker] Counter recalculation error: ${cntErr.message}`);
+      } finally {
+        client.release();
+      }
+    }
+
+    const finalStatus = failedRows > 0 && successfulRows === 0 ? 'failed' : 'completed';
+    await updateJobProgress(finalStatus, processedRows, successfulRows, failedRows, errorsList, Date.now());
+    logger.info(`[ImportJobWorker] Job ${jobId} finished with status '${finalStatus}': ${successfulRows}/${questions.length} questions.`);
+  } catch (err: any) {
+    logger.error(`[ImportJobWorker] Job ${jobId} failed completely: ${err.message}`);
+    await updateJobProgress('failed', processedRows, successfulRows, questions.length - successfulRows, [err.message], Date.now());
+  }
+}

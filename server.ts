@@ -60,7 +60,7 @@ import {
   getActiveUsersTelemetryFromDb,
   getQuestionCounts,
 } from './server/db.js';
-import { resolveQuestionsImport, commitQuestionsImport, rollbackImportBatch } from './server/services/importService.js';
+import { resolveQuestionsImport, commitQuestionsImport, rollbackImportBatch, enqueueQuestionsImportJob, getImportJobStatus } from './server/services/importService.js';
 import {
   getTaxonomyTreeService,
   getTaxonomyHealthService,
@@ -1847,6 +1847,75 @@ app.post(
       return res.status(500).json({
         error: 'Import rollback failed',
         details: error.message || 'An unexpected error occurred during rollback.',
+      });
+    }
+  }
+);
+
+// POST /api/admin/questions/import-async (Enqueue Background Import Job)
+app.post(
+  ['/api/admin/questions/import-async', '/api/admin/import/start-job'],
+  authenticateAdmin,
+  async (req: Request, res: Response) => {
+    try {
+      let rawQuestions: any[] = [];
+      if (Array.isArray(req.body)) {
+        rawQuestions = req.body;
+      } else if (req.body && Array.isArray(req.body.questions)) {
+        rawQuestions = req.body.questions;
+      } else if (req.body && Array.isArray(req.body.data)) {
+        rawQuestions = req.body.data;
+      }
+
+      if (!rawQuestions || rawQuestions.length === 0) {
+        return res.status(400).json({ error: 'No questions provided for async job enqueue' });
+      }
+
+      const createTaxonomy = Array.isArray(req.body.createTaxonomy) ? req.body.createTaxonomy : [];
+      const jobRes = await enqueueQuestionsImportJob(rawQuestions, createTaxonomy);
+
+      return res.status(202).json({
+        success: true,
+        jobId: jobRes.jobId,
+        batchId: jobRes.batchId,
+        status: jobRes.status,
+        totalRows: jobRes.totalRows,
+        message: `ইমপোর্ট ব্যাকগ্রাউন্ড জব তৈরি হয়েছে (${jobRes.totalRows} রো)।`,
+      });
+    } catch (error: any) {
+      console.error('Error starting async import job:', error);
+      return res.status(500).json({
+        error: 'Failed to start background import job',
+        details: error.message,
+      });
+    }
+  }
+);
+
+// GET /api/admin/questions/import-jobs/:jobId (Poll Background Job Status)
+app.get(
+  ['/api/admin/questions/import-jobs/:jobId', '/api/admin/import/jobs/:jobId'],
+  authenticateAdmin,
+  async (req: Request, res: Response) => {
+    try {
+      const { jobId } = req.params;
+      const jobStatus = await getImportJobStatus(jobId);
+      if (!jobStatus) {
+        return res.status(404).json({ error: 'Import job not found' });
+      }
+
+      const progress = jobStatus.totalRows > 0 ? Math.round((jobStatus.processedRows / jobStatus.totalRows) * 100) : 0;
+
+      return res.status(200).json({
+        success: true,
+        ...jobStatus,
+        progress,
+      });
+    } catch (error: any) {
+      console.error('Error getting import job status:', error);
+      return res.status(500).json({
+        error: 'Failed to fetch job status',
+        details: error.message,
       });
     }
   }

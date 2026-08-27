@@ -2098,6 +2098,58 @@ export async function rollbackQuestionsImportApi(batchId: string): Promise<{
   return data;
 }
 
+export async function importQuestionsAsyncApi(payload: {
+  questions: any[];
+  createTaxonomy?: any[];
+}): Promise<{
+  success: boolean;
+  jobId: string;
+  batchId: string;
+  status: string;
+  totalRows: number;
+  message: string;
+}> {
+  const res = await fetchWithRetry(getApiUrl('/api/admin/questions/import-async'), {
+    method: 'POST',
+    headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'ব্যাকগ্রাউন্ড ইমপোর্ট জব এনকিউ করতে ব্যর্থ হয়েছে');
+  }
+  return data;
+}
+
+export async function fetchImportJobStatusApi(jobId: string): Promise<{
+  success: boolean;
+  id: string;
+  type: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  totalRows: number;
+  processedRows: number;
+  successfulRows: number;
+  failedRows: number;
+  batchId: string;
+  progress: number;
+  errors?: string[];
+  createdAt: number;
+  updatedAt: number;
+  completedAt?: number;
+}> {
+  const res = await fetchWithRetry(getApiUrl(`/api/admin/questions/import-jobs/${encodeURIComponent(jobId)}`), {
+    method: 'GET',
+    headers: getAdminAuthHeaders(),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'ইমপোর্ট জবের স্ট্যাটাস লোড করতে ব্যর্থ হয়েছে');
+  }
+  return data;
+}
+
 export async function fetchTopicStatsApi(): Promise<{
   success: boolean;
   totalTopics: number;

@@ -50,6 +50,8 @@ import {
   bulkImportQuestionsApi,
   importQuestionsPreviewApi,
   importQuestionsCommitApi,
+  importQuestionsAsyncApi,
+  fetchImportJobStatusApi,
   rollbackQuestionsImportApi,
   bulkImportWrittenQuestionsApi,
   bulkImportTopicsApi,
@@ -65,6 +67,33 @@ interface AdminBulkImportModalProps {
 }
 
 export type ImportContentType = 'mcq' | 'written' | 'topic' | 'knowledge_snippet';
+
+export const BASE_SUBJECTS_LIST = [
+  { id: 'physics', name: 'পদার্থবিজ্ঞান (Physics)', hasPapers: true },
+  { id: 'chemistry', name: 'রসায়ন (Chemistry)', hasPapers: true },
+  { id: 'math', name: 'উচ্চতর গণিত (Higher Math)', hasPapers: true },
+  { id: 'biology', name: 'জীববিজ্ঞান (Biology)', hasPapers: true },
+  { id: 'ict', name: 'তথ্য ও যোগাযোগ প্রযুক্তি (ICT)', hasPapers: false },
+  { id: 'bangla', name: 'বাংলা (Bangla)', hasPapers: false },
+  { id: 'english', name: 'ইংরেজি (English)', hasPapers: false },
+  { id: 'gk', name: 'সাধারণ জ্ঞান (General Knowledge)', hasPapers: false },
+];
+
+export function parseSubjectIdToBaseAndPaper(subjectId: QuestionSubject): { base: string; paper: string } {
+  if (subjectId.startsWith('physics_')) return { base: 'physics', paper: subjectId.endsWith('2') ? '2nd' : '1st' };
+  if (subjectId.startsWith('chemistry_')) return { base: 'chemistry', paper: subjectId.endsWith('2') ? '2nd' : '1st' };
+  if (subjectId.startsWith('math_')) return { base: 'math', paper: subjectId.endsWith('2') ? '2nd' : '1st' };
+  if (subjectId.startsWith('biology_')) return { base: 'biology', paper: subjectId.endsWith('2') ? '2nd' : '1st' };
+  return { base: subjectId, paper: '1st' };
+}
+
+export function buildSubjectIdFromBaseAndPaper(base: string, paper: string): QuestionSubject {
+  if (base === 'physics') return paper === '2nd' ? 'physics_2' : 'physics_1';
+  if (base === 'chemistry') return paper === '2nd' ? 'chemistry_2' : 'chemistry_1';
+  if (base === 'math') return paper === '2nd' ? 'math_2' : 'math_1';
+  if (base === 'biology') return paper === '2nd' ? 'biology_2' : 'biology_1';
+  return base as QuestionSubject;
+}
 
 export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
   isOpen,
@@ -83,6 +112,16 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
   const [defaultChapter, setDefaultChapter] = useState<string>('phy1_ch1');
   const [defaultDifficulty, setDefaultDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium');
   const [defaultTagsInput, setDefaultTagsInput] = useState<string>('DU Ka 24-25, Varsity A');
+
+  // Step 4: Cascading Taxonomy Picker States (Subject Base -> Paper -> Chapter -> Topic)
+  const [defaultSubjectBase, setDefaultSubjectBase] = useState<string>('physics');
+  const [defaultPaper, setDefaultPaper] = useState<string>('1st');
+  const [defaultTopicId, setDefaultTopicId] = useState<string>('');
+
+  // Bulk Assigner Cascading State
+  const [assignSubjectBase, setAssignSubjectBase] = useState<string>('physics');
+  const [assignPaper, setAssignPaper] = useState<string>('1st');
+  const [assignChapterId, setAssignChapterId] = useState<string>('phy1_ch1');
 
   // File Upload State
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
@@ -112,6 +151,18 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
   } | null>(null);
   const [isRollingBack, setIsRollingBack] = useState(false);
   const [rollbackMessage, setRollbackMessage] = useState<string | null>(null);
+
+  // Background Job & Progress Tracking State (Step 3 Implementation)
+  const [activeJob, setActiveJob] = useState<{
+    jobId: string;
+    batchId: string;
+    status: 'pending' | 'processing' | 'completed' | 'failed';
+    totalRows: number;
+    processedRows: number;
+    successfulRows: number;
+    failedRows: number;
+    progress: number;
+  } | null>(null);
 
   // Selected question indices for bulk topic assignment
   const [selectedQuestionIndices, setSelectedQuestionIndices] = useState<number[]>([]);
@@ -147,12 +198,18 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
     let targetTopicId = '';
     let targetTopicName = '';
 
+    const targetSubId = buildSubjectIdFromBaseAndPaper(assignSubjectBase, assignPaper);
+    const targetChapId = assignChapterId;
+    const selectedChapObj = CHAPTERS_DATA.find((c) => c.id === targetChapId);
+    const selectedSubObj = SUBJECTS_DATA.find((s) => s.id === targetSubId);
+
     if (assignTopicMode === 'existing') {
       if (!selectedTopicId) {
         alert('অনুগ্রহ করে একটি টপিক নির্বাচন করুন!');
         return;
       }
-      const found = dbTopics.find((t) => t.id === selectedTopicId);
+      const availableTops = getTopicsForChapter(assignChapterId);
+      const found = availableTops.find((t) => t.id === selectedTopicId) || dbTopics.find((t) => t.id === selectedTopicId);
       targetTopicId = selectedTopicId;
       targetTopicName = found ? found.bangla_name || found.name || found.id : selectedTopicId;
     } else {
@@ -161,14 +218,14 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
         return;
       }
       targetTopicName = customTopicName.trim();
-      targetTopicId = customTopicId.trim() || `top_${defaultChapter}_${Date.now().toString(36)}`;
+      targetTopicId = customTopicId.trim() || `top_${targetChapId}_${Date.now().toString(36)}`;
 
       // Persist to topics table immediately via API
       try {
         const created = await createTopic({
           id: targetTopicId,
-          chapter_id: defaultChapter,
-          subject_id: defaultSubject,
+          chapter_id: targetChapId,
+          subject_id: targetSubId,
           name: targetTopicName,
           bangla_name: targetTopicName,
           star_rating: 3,
@@ -206,11 +263,15 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
       if (targetIndices.includes(idx)) {
         return {
           ...q,
+          subject_id: targetSubId,
+          subject_name: selectedSubObj?.name || q.subject_name,
+          chapter_id: targetChapId,
+          chapter_name: selectedChapObj?.name || q.chapter_name,
           topic_id: targetTopicId,
           topic_name: targetTopicName,
           status: (q.status === 'invalid' && (!q.question_text || !q.options) ? 'invalid' : 'valid') as 'valid' | 'warning' | 'invalid',
           isValid: true,
-          smartMappedNote: `🎯 টপিক ম্যানুয়ালি সেট ও সংরক্ষণ করা হয়েছে: ${targetTopicName} (${targetTopicId})`,
+          smartMappedNote: `🎯 ট্যাক্সোনমি ও টপিক সেট করা হয়েছে: ${targetTopicName} (${targetTopicId})`,
         };
       }
       return q;
@@ -271,11 +332,128 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
     return CHAPTERS_DATA.filter((ch) => ch.subject_id === defaultSubject);
   }, [defaultSubject]);
 
+  // Step 4: Get topics for any specific chapter (combines DB topics and static subtopics)
+  const getTopicsForChapter = useMemo(() => {
+    return (chapterId: string) => {
+      if (!chapterId) return [];
+      const topicsMap = new Map<string, { id: string; name: string; bangla_name: string; topic_code?: string }>();
+
+      // 1. From DB topics
+      dbTopics.forEach((t) => {
+        if (t.chapter_id === chapterId) {
+          topicsMap.set(t.id, {
+            id: t.id,
+            name: t.name || t.bangla_name || t.id,
+            bangla_name: t.bangla_name || t.name || t.id,
+          });
+        }
+      });
+
+      // 2. From static COMPREHENSIVE_CHAPTERS_DATA
+      const ch = COMPREHENSIVE_CHAPTERS_DATA.find((c) => c.id === chapterId);
+      if (ch && ch.subtopics) {
+        ch.subtopics.forEach((st) => {
+          if (!topicsMap.has(st.id)) {
+            topicsMap.set(st.id, {
+              id: st.id,
+              name: st.name || st.bangla_name || st.id,
+              bangla_name: st.bangla_name || st.name || st.id,
+              topic_code: st.topic_code,
+            });
+          }
+        });
+      }
+
+      return Array.from(topicsMap.values());
+    };
+  }, [dbTopics]);
+
+  // Global Defaults Cascading Handlers
+  const handleDefaultSubjectBaseChange = (base: string) => {
+    setDefaultSubjectBase(base);
+    const paper = base === 'physics' || base === 'chemistry' || base === 'math' || base === 'biology' ? defaultPaper : '1st';
+    const newSubId = buildSubjectIdFromBaseAndPaper(base, paper);
+    setDefaultSubject(newSubId);
+
+    const chaps = CHAPTERS_DATA.filter((ch) => ch.subject_id === newSubId);
+    if (chaps.length > 0) {
+      setDefaultChapter(chaps[0].id);
+      const topList = getTopicsForChapter(chaps[0].id);
+      setDefaultTopicId(topList.length > 0 ? topList[0].id : '');
+    } else {
+      setDefaultChapter('');
+      setDefaultTopicId('');
+    }
+  };
+
+  const handleDefaultPaperChange = (paper: string) => {
+    setDefaultPaper(paper);
+    const newSubId = buildSubjectIdFromBaseAndPaper(defaultSubjectBase, paper);
+    setDefaultSubject(newSubId);
+
+    const chaps = CHAPTERS_DATA.filter((ch) => ch.subject_id === newSubId);
+    if (chaps.length > 0) {
+      setDefaultChapter(chaps[0].id);
+      const topList = getTopicsForChapter(chaps[0].id);
+      setDefaultTopicId(topList.length > 0 ? topList[0].id : '');
+    } else {
+      setDefaultChapter('');
+      setDefaultTopicId('');
+    }
+  };
+
+  const handleDefaultChapterChange = (chapterId: string) => {
+    setDefaultChapter(chapterId);
+    const topList = getTopicsForChapter(chapterId);
+    setDefaultTopicId(topList.length > 0 ? topList[0].id : '');
+  };
+
+  // Bulk Assigner Cascading Handlers
+  const handleAssignSubjectBaseChange = (base: string) => {
+    setAssignSubjectBase(base);
+    const paper = base === 'physics' || base === 'chemistry' || base === 'math' || base === 'biology' ? assignPaper : '1st';
+    const newSubId = buildSubjectIdFromBaseAndPaper(base, paper);
+    const chaps = CHAPTERS_DATA.filter((ch) => ch.subject_id === newSubId);
+    if (chaps.length > 0) {
+      setAssignChapterId(chaps[0].id);
+      const topList = getTopicsForChapter(chaps[0].id);
+      setSelectedTopicId(topList.length > 0 ? topList[0].id : '');
+    } else {
+      setAssignChapterId('');
+      setSelectedTopicId('');
+    }
+  };
+
+  const handleAssignPaperChange = (paper: string) => {
+    setAssignPaper(paper);
+    const newSubId = buildSubjectIdFromBaseAndPaper(assignSubjectBase, paper);
+    const chaps = CHAPTERS_DATA.filter((ch) => ch.subject_id === newSubId);
+    if (chaps.length > 0) {
+      setAssignChapterId(chaps[0].id);
+      const topList = getTopicsForChapter(chaps[0].id);
+      setSelectedTopicId(topList.length > 0 ? topList[0].id : '');
+    } else {
+      setAssignChapterId('');
+      setSelectedTopicId('');
+    }
+  };
+
+  const handleAssignChapterChange = (chapterId: string) => {
+    setAssignChapterId(chapterId);
+    const topList = getTopicsForChapter(chapterId);
+    setSelectedTopicId(topList.length > 0 ? topList[0].id : '');
+  };
+
   const handleSubjectChange = (subjectId: QuestionSubject) => {
     setDefaultSubject(subjectId);
+    const parsed = parseSubjectIdToBaseAndPaper(subjectId);
+    setDefaultSubjectBase(parsed.base);
+    setDefaultPaper(parsed.paper);
     const firstChap = CHAPTERS_DATA.find((ch) => ch.subject_id === subjectId);
     if (firstChap) {
       setDefaultChapter(firstChap.id);
+      const topList = getTopicsForChapter(firstChap.id);
+      setDefaultTopicId(topList.length > 0 ? topList[0].id : '');
     }
   };
 
@@ -284,12 +462,23 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
     const selectedSubObj = SUBJECTS_DATA.find((s) => s.id === defaultSubject);
     const tagsArr = defaultTagsInput.split(/[,;]+/).map((t) => t.trim()).filter(Boolean);
 
+    let topicName: string | undefined = undefined;
+    if (defaultTopicId) {
+      const availableTops = getTopicsForChapter(defaultChapter);
+      const foundTop = availableTops.find((t) => t.id === defaultTopicId);
+      if (foundTop) {
+        topicName = foundTop.bangla_name || foundTop.name;
+      }
+    }
+
     return {
       subject_id: defaultSubject,
       subject_name: selectedSubObj?.name || 'Physics 1st Paper',
       paper: defaultSubject.endsWith('_2') ? '2nd' : '1st',
       chapter_id: defaultChapter,
       chapter_name: selectedChapObj?.name || 'সাধারণ অধ্যায়',
+      topic_id: defaultTopicId || undefined,
+      topic_name: topicName,
       tags: tagsArr.length > 0 ? tagsArr : ['Varsity Ka'],
       difficulty: defaultDifficulty,
     };
@@ -716,20 +905,61 @@ Ans: A
           type: q.type || 'mcq',
         }));
 
-        const res = await importQuestionsCommitApi({
+        // Use Background Job Enqueue + Polling Progress (Step 3)
+        const jobRes = await importQuestionsAsyncApi({
           questions: formatted,
         });
 
-        setCommittedBatch({
-          batchId: res.batchId,
-          count: res.count,
-          chunkCount: res.chunkCount,
-          failedChunksCount: res.failedChunksCount,
-          message: res.message || `${res.count} টি প্রশ্ন সফলভাবে ইমপোর্ট সম্পন্ন হয়েছে!`,
-          committedAt: Date.now(),
+        setActiveJob({
+          jobId: jobRes.jobId,
+          batchId: jobRes.batchId,
+          status: 'pending',
+          totalRows: jobRes.totalRows,
+          processedRows: 0,
+          successfulRows: 0,
+          failedRows: 0,
+          progress: 0,
         });
-        setParsedQuestions([]);
-        onSuccess(res.count);
+
+        const pollTimer = setInterval(async () => {
+          try {
+            const st = await fetchImportJobStatusApi(jobRes.jobId);
+            setActiveJob({
+              jobId: st.id,
+              batchId: st.batchId,
+              status: st.status,
+              totalRows: st.totalRows,
+              processedRows: st.processedRows,
+              successfulRows: st.successfulRows,
+              failedRows: st.failedRows,
+              progress: st.progress,
+            });
+
+            if (st.status === 'completed' || st.status === 'failed') {
+              clearInterval(pollTimer);
+              setIsSubmitting(false);
+
+              if (st.status === 'completed') {
+                setCommittedBatch({
+                  batchId: st.batchId,
+                  count: st.successfulRows,
+                  message: `সফলভাবে ${st.successfulRows} টি প্রশ্ন ব্যাকগ্রাউন্ড জবের মাধ্যমে প্রসেস ও ইমপোর্ট সম্পন্ন হয়েছে!`,
+                  committedAt: Date.now(),
+                });
+                setParsedQuestions([]);
+                onSuccess(st.successfulRows);
+              } else {
+                setSubmitError(`ইমপোর্ট জব ব্যর্থ হয়েছে: ${st.errors?.join(', ') || 'অজানা ট্রানজ্যাকশন সমস্যা'}`);
+              }
+
+              setTimeout(() => {
+                setActiveJob(null);
+              }, 4000);
+            }
+          } catch (pollErr) {
+            console.error('Job polling error:', pollErr);
+          }
+        }, 1200);
       } else if (importType === 'written') {
         const formatted = itemsToUpload.map((q) => ({
           subject_id: q.subject_id,
@@ -897,6 +1127,80 @@ Ans: A
           </div>
         </div>
 
+        {/* Active Job Progress Tracking Banner (Step 3 Implementation) */}
+        {activeJob && (
+          <div className="p-5 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 border-b border-indigo-700/50 text-white shrink-0">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-500/20 border border-indigo-400/40 flex items-center justify-center text-indigo-300 shrink-0">
+                  {activeJob.status === 'completed' ? (
+                    <CheckCircle2 className="w-6 h-6 text-emerald-400" />
+                  ) : activeJob.status === 'failed' ? (
+                    <AlertTriangle className="w-6 h-6 text-rose-400" />
+                  ) : (
+                    <RefreshCw className="w-6 h-6 animate-spin text-indigo-400" />
+                  )}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold text-white">
+                      {activeJob.status === 'completed'
+                        ? 'ব্যাকগ্রাউন্ড ইমপোর্ট জব সম্পন্ন হয়েছে!'
+                        : activeJob.status === 'failed'
+                        ? 'ব্যাকগ্রাউন্ড ইমপোর্ট জব ব্যর্থ হয়েছে'
+                        : 'ব্যাকগ্রাউন্ডে প্রশ্ন ইমপোর্ট প্রসেসিং চলছে...'}
+                    </h3>
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full text-[11px] font-extrabold uppercase tracking-wider ${
+                        activeJob.status === 'completed'
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                          : activeJob.status === 'failed'
+                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                          : 'bg-indigo-500/30 text-indigo-200 border border-indigo-400/50 animate-pulse'
+                      }`}
+                    >
+                      {activeJob.status}
+                    </span>
+                  </div>
+                  <p className="text-xs text-indigo-200/80 mt-1">
+                    জব ID: <code className="font-mono bg-indigo-900/60 px-1.5 py-0.5 rounded text-indigo-300">{activeJob.jobId}</code> | 
+                    ব্যাচ ID: <code className="font-mono bg-indigo-900/60 px-1.5 py-0.5 rounded text-emerald-300">{activeJob.batchId}</code>
+                  </p>
+                </div>
+              </div>
+              <div className="text-right">
+                <span className="text-2xl font-extrabold text-indigo-300 font-mono">{activeJob.progress}%</span>
+                <p className="text-[11px] text-indigo-200/70 font-medium">অগ্রগতি</p>
+              </div>
+            </div>
+
+            {/* Live Animated Progress Bar */}
+            <div className="mt-4">
+              <div className="w-full h-3 bg-indigo-950 rounded-full overflow-hidden p-0.5 border border-indigo-800/80">
+                <div
+                  className={`h-full rounded-full transition-all duration-300 ${
+                    activeJob.status === 'completed'
+                      ? 'bg-emerald-500'
+                      : activeJob.status === 'failed'
+                      ? 'bg-rose-500'
+                      : 'bg-gradient-to-r from-indigo-500 via-sky-400 to-emerald-400 animate-pulse'
+                  }`}
+                  style={{ width: `${Math.min(100, Math.max(0, activeJob.progress))}%` }}
+                />
+              </div>
+              <div className="mt-2 flex items-center justify-between text-xs text-indigo-200/90 font-medium">
+                <span>
+                  প্রসেস করা হয়েছে: <strong className="text-white font-mono">{activeJob.processedRows}</strong> / {activeJob.totalRows}
+                </span>
+                <span className="flex items-center gap-3">
+                  <span className="text-emerald-400">সফল: {activeJob.successfulRows}</span>
+                  {activeJob.failedRows > 0 && <span className="text-rose-400">ব্যর্থ: {activeJob.failedRows}</span>}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Committed Batch Notification Banner (Step 2 Implementation) */}
         {committedBatch && (
           <div className="p-5 bg-emerald-50/90 border-b border-emerald-200 shrink-0">
@@ -998,16 +1302,16 @@ Ans: A
             )}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-            {/* Subject */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-3 text-xs">
+            {/* 1. Subject Base */}
             <div>
-              <label className="block font-semibold text-slate-600 mb-1">বিষয় (Subject)</label>
+              <label className="block font-semibold text-slate-600 mb-1">১. বিষয় (Subject)</label>
               <select
-                value={defaultSubject}
-                onChange={(e) => handleSubjectChange(e.target.value as QuestionSubject)}
-                className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
+                value={defaultSubjectBase}
+                onChange={(e) => handleDefaultSubjectBaseChange(e.target.value)}
+                className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-2 text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
               >
-                {SUBJECTS_DATA.map((sub) => (
+                {BASE_SUBJECTS_LIST.map((sub) => (
                   <option key={sub.id} value={sub.id}>
                     {sub.name}
                   </option>
@@ -1015,17 +1319,48 @@ Ans: A
               </select>
             </div>
 
-            {/* Chapter */}
+            {/* 2. Paper */}
             <div>
-              <label className="block font-semibold text-slate-600 mb-1">অধ্যায় (Chapter)</label>
+              <label className="block font-semibold text-slate-600 mb-1">২. পত্র (Paper)</label>
+              <select
+                value={defaultPaper}
+                onChange={(e) => handleDefaultPaperChange(e.target.value)}
+                disabled={!BASE_SUBJECTS_LIST.find((s) => s.id === defaultSubjectBase)?.hasPapers}
+                className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-2 text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-hidden disabled:bg-slate-100 disabled:text-slate-400"
+              >
+                <option value="1st">১ম পত্র (1st Paper)</option>
+                <option value="2nd">২য় পত্র (2nd Paper)</option>
+              </select>
+            </div>
+
+            {/* 3. Chapter */}
+            <div>
+              <label className="block font-semibold text-slate-600 mb-1">৩. অধ্যায় (Chapter)</label>
               <select
                 value={defaultChapter}
-                onChange={(e) => setDefaultChapter(e.target.value)}
-                className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
+                onChange={(e) => handleDefaultChapterChange(e.target.value)}
+                className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-2 text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
               >
                 {availableChapters.map((chap) => (
                   <option key={chap.id} value={chap.id}>
-                    {chap.name}
+                    {chap.bangla_name || chap.name} [{chap.id}]
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 4. Topic */}
+            <div>
+              <label className="block font-semibold text-slate-600 mb-1">৪. ডিফল্ট টপিক (Topic)</label>
+              <select
+                value={defaultTopicId}
+                onChange={(e) => setDefaultTopicId(e.target.value)}
+                className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-2 text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
+              >
+                <option value="">-- কোনো টপিক সিলেক্ট করা হয়নি --</option>
+                {getTopicsForChapter(defaultChapter).map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.topic_code ? `${t.topic_code}: ` : ''}{t.bangla_name || t.name} [{t.id}]
                   </option>
                 ))}
               </select>
@@ -1039,7 +1374,7 @@ Ans: A
                 value={defaultTagsInput}
                 onChange={(e) => setDefaultTagsInput(e.target.value)}
                 placeholder="যেমন: DU Ka 24-25, Model Test"
-                className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
+                className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-2 text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
               />
             </div>
 
@@ -1049,7 +1384,7 @@ Ans: A
               <select
                 value={defaultDifficulty}
                 onChange={(e) => setDefaultDifficulty(e.target.value as any)}
-                className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
+                className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-2 text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
               >
                 <option value="easy">Easy (সহজ)</option>
                 <option value="medium">Medium (মাঝারি)</option>
@@ -1503,23 +1838,72 @@ Ans: A
 
                   {/* Input Fields */}
                   {assignTopicMode === 'existing' ? (
-                    <div className="md:col-span-6">
-                      <label className="text-[11px] font-bold text-slate-700 block mb-1">
-                        উপলব্ধ টপিক নির্বাচন করুন ({dbTopics.length} টি)
-                      </label>
-                      <select
-                        value={selectedTopicId}
-                        onChange={(e) => setSelectedTopicId(e.target.value)}
-                        className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-900 bg-white font-medium focus:ring-2 focus:ring-indigo-500/20"
-                      >
-                        <option value="">-- টপিক নির্বাচন করুন --</option>
-                        {dbTopics.map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {t.bangla_name || t.name || t.id} [{t.id}]
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    <>
+                      {/* Subject Base */}
+                      <div className="md:col-span-2">
+                        <label className="text-[11px] font-bold text-slate-700 block mb-1">বিষয়</label>
+                        <select
+                          value={assignSubjectBase}
+                          onChange={(e) => handleAssignSubjectBaseChange(e.target.value)}
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-900 bg-white font-medium focus:ring-2 focus:ring-indigo-500/20"
+                        >
+                          {BASE_SUBJECTS_LIST.map((sub) => (
+                            <option key={sub.id} value={sub.id}>
+                              {sub.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Paper */}
+                      <div className="md:col-span-1">
+                        <label className="text-[11px] font-bold text-slate-700 block mb-1">পত্র</label>
+                        <select
+                          value={assignPaper}
+                          onChange={(e) => handleAssignPaperChange(e.target.value)}
+                          disabled={!BASE_SUBJECTS_LIST.find((s) => s.id === assignSubjectBase)?.hasPapers}
+                          className="w-full px-2 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-900 bg-white font-medium focus:ring-2 focus:ring-indigo-500/20 disabled:bg-slate-100 disabled:text-slate-400"
+                        >
+                          <option value="1st">১ম</option>
+                          <option value="2nd">২য়</option>
+                        </select>
+                      </div>
+
+                      {/* Chapter */}
+                      <div className="md:col-span-3">
+                        <label className="text-[11px] font-bold text-slate-700 block mb-1">অধ্যায়</label>
+                        <select
+                          value={assignChapterId}
+                          onChange={(e) => handleAssignChapterChange(e.target.value)}
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-900 bg-white font-medium focus:ring-2 focus:ring-indigo-500/20"
+                        >
+                          {CHAPTERS_DATA.filter((ch) => ch.subject_id === buildSubjectIdFromBaseAndPaper(assignSubjectBase, assignPaper)).map((chap) => (
+                            <option key={chap.id} value={chap.id}>
+                              {chap.bangla_name || chap.name} [{chap.id}]
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Topic Selector */}
+                      <div className="md:col-span-3">
+                        <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                          টপিক ({getTopicsForChapter(assignChapterId).length} টি)
+                        </label>
+                        <select
+                          value={selectedTopicId}
+                          onChange={(e) => setSelectedTopicId(e.target.value)}
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-900 bg-white font-medium focus:ring-2 focus:ring-indigo-500/20"
+                        >
+                          <option value="">-- টপিক নির্বাচন করুন --</option>
+                          {getTopicsForChapter(assignChapterId).map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.topic_code ? `${t.topic_code}: ` : ''}{t.bangla_name || t.name} [{t.id}]
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </>
                   ) : (
                     <>
                       <div className="md:col-span-3">

@@ -68,6 +68,8 @@ export interface BulkDefaults {
   paper?: '1st' | '2nd';
   chapter_id?: string;
   chapter_name?: string;
+  topic_id?: string;
+  topic_name?: string;
   tags?: string[];
   difficulty?: 'easy' | 'medium' | 'hard';
   category?: string;
