@@ -133,11 +133,13 @@ export interface ImportPreviewResult {
     fullyResolvedCount: number;
     ambiguousCount: number;
     missingTaxonomyCount: number;
+    duplicateCount?: number;
     canDirectlyCommit: boolean;
   };
   fullyResolvedRows: FullyResolvedRow[];
   ambiguousRows: AmbiguousRow[];
   missingTaxonomyRows: MissingTaxonomyRow[];
+  duplicateCheck?: DuplicateCheckResult;
   taxonomyTree: TaxonomyTreeNode[];
 }
 
@@ -152,9 +154,27 @@ export interface CommitTaxonomyItem {
   star_rating?: number;
 }
 
+export interface DuplicateMatchInfo {
+  rowIndex: number;
+  questionText: string;
+  matchedQuestionId: string;
+  matchedQuestionText: string;
+  similarity: number;
+  matchType: 'exact_text' | 'latex_hash' | 'fuzzy_text' | 'intra_batch' | 'id_conflict';
+  isExistingInDb: boolean;
+}
+
+export interface DuplicateCheckResult {
+  duplicateCount: number;
+  exactDuplicates: DuplicateMatchInfo[];
+  similarDuplicates: DuplicateMatchInfo[];
+  intraBatchDuplicates: DuplicateMatchInfo[];
+}
+
 export interface CommitImportPayload {
   questions: RawImportRow[];
   createTaxonomy?: CommitTaxonomyItem[];
+  duplicateStrategy?: 'skip' | 'overwrite' | 'keep_both';
 }
 
 export interface CommitImportResult {
@@ -282,6 +302,163 @@ export async function loadTaxonomyContext(): Promise<{
   const taxonomyTree = buildTaxonomyTree(subjects, chapters, topics);
 
   return { subjects, chapters, topics, taxonomyTree };
+}
+
+// ==========================================
+// 1.5. DUPLICATE QUESTION DETECTION ENGINE
+// ==========================================
+
+export async function checkQuestionsDuplicates(
+  rawQuestions: RawImportRow[]
+): Promise<DuplicateCheckResult> {
+  const exactDuplicates: DuplicateMatchInfo[] = [];
+  const similarDuplicates: DuplicateMatchInfo[] = [];
+  const intraBatchDuplicates: DuplicateMatchInfo[] = [];
+
+  const normTextMap = new Map<string, number>();
+  const idMap = new Map<string, number>();
+
+  // 1. Check Intra-batch duplicates first
+  for (let i = 0; i < rawQuestions.length; i++) {
+    const q = rawQuestions[i];
+    const rawText = (q.question_text || q.questionText || q.question || '').trim();
+    const qId = q.id?.trim();
+    const norm = normalizeBangla(rawText).toLowerCase().replace(/[\s\t\n\r]+/g, ' ').trim();
+
+    if (qId) {
+      if (idMap.has(qId)) {
+        const prevIdx = idMap.get(qId)!;
+        intraBatchDuplicates.push({
+          rowIndex: i,
+          questionText: rawText,
+          matchedQuestionId: qId,
+          matchedQuestionText: (rawQuestions[prevIdx].question_text || '').trim(),
+          similarity: 1.0,
+          matchType: 'id_conflict',
+          isExistingInDb: false,
+        });
+      } else {
+        idMap.set(qId, i);
+      }
+    }
+
+    if (norm && norm.length > 5) {
+      if (normTextMap.has(norm)) {
+        const prevIdx = normTextMap.get(norm)!;
+        if (!qId || !idMap.has(qId)) {
+          intraBatchDuplicates.push({
+            rowIndex: i,
+            questionText: rawText,
+            matchedQuestionId: rawQuestions[prevIdx].id || `Row #${prevIdx + 1}`,
+            matchedQuestionText: (rawQuestions[prevIdx].question_text || '').trim(),
+            similarity: 1.0,
+            matchType: 'intra_batch',
+            isExistingInDb: false,
+          });
+        }
+      } else {
+        normTextMap.set(norm, i);
+      }
+    }
+  }
+
+  // 2. Check DB duplicates
+  const activePool = getPgPool();
+  let dbQuestions: { id: string; question_text: string; math_formula_latex?: string }[] = [];
+
+  if (isPostgresActive() && activePool) {
+    try {
+      const res = await query('SELECT id, question_text, math_formula_latex FROM questions LIMIT 5000');
+      if (res && res.rows) {
+        dbQuestions = res.rows;
+      }
+    } catch (err: any) {
+      logger.warn(`[ImportService] DB query for duplicate check failed: ${err.message}`);
+    }
+  } else if (memoryStore && Array.isArray((memoryStore as any).questions)) {
+    dbQuestions = (memoryStore as any).questions;
+  }
+
+  if (dbQuestions.length > 0) {
+    const dbNormMap = new Map<string, { id: string; text: string; latex?: string }>();
+    const dbIdMap = new Set<string>();
+
+    for (const dbQ of dbQuestions) {
+      if (dbQ.id) dbIdMap.add(dbQ.id);
+      const norm = normalizeBangla(dbQ.question_text || '').toLowerCase().replace(/[\s\t\n\r]+/g, ' ').trim();
+      if (norm) {
+        dbNormMap.set(norm, { id: dbQ.id, text: dbQ.question_text || '', latex: dbQ.math_formula_latex });
+      }
+    }
+
+    for (let i = 0; i < rawQuestions.length; i++) {
+      const q = rawQuestions[i];
+      const rawText = (q.question_text || q.questionText || q.question || '').trim();
+      const qId = q.id?.trim();
+      const norm = normalizeBangla(rawText).toLowerCase().replace(/[\s\t\n\r]+/g, ' ').trim();
+
+      // Check ID conflict with DB
+      if (qId && dbIdMap.has(qId)) {
+        exactDuplicates.push({
+          rowIndex: i,
+          questionText: rawText,
+          matchedQuestionId: qId,
+          matchedQuestionText: rawText,
+          similarity: 1.0,
+          matchType: 'id_conflict',
+          isExistingInDb: true,
+        });
+        continue;
+      }
+
+      if (!norm || norm.length <= 5) continue;
+
+      // Check exact normalized match
+      if (dbNormMap.has(norm)) {
+        const matched = dbNormMap.get(norm)!;
+        exactDuplicates.push({
+          rowIndex: i,
+          questionText: rawText,
+          matchedQuestionId: matched.id,
+          matchedQuestionText: matched.text,
+          similarity: 1.0,
+          matchType: 'exact_text',
+          isExistingInDb: true,
+        });
+        continue;
+      }
+
+      // Check fuzzy similarity match
+      for (const [dbNormText, matched] of dbNormMap.entries()) {
+        const sim = calculateSimilarity(norm, dbNormText);
+        if (sim >= 0.88) {
+          similarDuplicates.push({
+            rowIndex: i,
+            questionText: rawText,
+            matchedQuestionId: matched.id,
+            matchedQuestionText: matched.text,
+            similarity: Math.round(sim * 100) / 100,
+            matchType: 'fuzzy_text',
+            isExistingInDb: true,
+          });
+          break;
+        }
+      }
+    }
+  }
+
+  const allDupIndices = new Set([
+    ...exactDuplicates.map((d) => d.rowIndex),
+    ...similarDuplicates.map((d) => d.rowIndex),
+    ...intraBatchDuplicates.map((d) => d.rowIndex),
+  ]);
+
+  return {
+    duplicateCount: allDupIndices.size,
+    exactDuplicates,
+    similarDuplicates,
+    intraBatchDuplicates,
+  };
 }
 
 // ==========================================
@@ -539,17 +716,21 @@ export async function resolveQuestionsImport(
     }
   }
 
+  const duplicateCheck = await checkQuestionsDuplicates(rawQuestions);
+
   return {
     summary: {
       totalRows: rawQuestions.length,
       fullyResolvedCount: fullyResolvedRows.length,
       ambiguousCount: ambiguousRows.length,
       missingTaxonomyCount: missingTaxonomyRows.length,
+      duplicateCount: duplicateCheck.duplicateCount,
       canDirectlyCommit: ambiguousRows.length === 0 && missingTaxonomyRows.length === 0,
     },
     fullyResolvedRows,
     ambiguousRows,
     missingTaxonomyRows,
+    duplicateCheck,
     taxonomyTree,
   };
 }
@@ -561,7 +742,7 @@ export async function resolveQuestionsImport(
 export async function commitQuestionsImport(
   payload: CommitImportPayload
 ): Promise<CommitImportResult> {
-  const { questions, createTaxonomy = [] } = payload;
+  const { questions, createTaxonomy = [], duplicateStrategy = 'skip' } = payload;
 
   if (!questions || questions.length === 0) {
     return {
@@ -705,7 +886,15 @@ export async function commitQuestionsImport(
               tagsArr = q.tags.split(',').map((t) => t.trim()).filter(Boolean);
             }
 
-            const questionId = q.id || `q_${q.subject_id || 'phy'}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+            // Step 6: Duplicate handling strategy filter
+            if (duplicateStrategy === 'skip' && (q as any).isDuplicate) {
+              continue;
+            }
+
+            let questionId = q.id;
+            if (duplicateStrategy === 'keep_both' || !questionId) {
+              questionId = `q_${q.subject_id || 'phy'}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+            }
             const paperStr = q.paper === 2 || q.paper === '2' || q.paper === '2nd' ? '2nd' : '1st';
 
             await client.query(upsertQuestionSql, [
@@ -970,7 +1159,8 @@ export async function getImportJobStatus(jobId: string): Promise<ImportJobStatus
 
 export async function enqueueQuestionsImportJob(
   questions: RawImportRow[],
-  createTaxonomy: any[] = []
+  createTaxonomy: any[] = [],
+  duplicateStrategy: 'skip' | 'overwrite' | 'keep_both' = 'skip'
 ): Promise<{ jobId: string; batchId: string; status: string; totalRows: number }> {
   const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const batchId = `batch_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -1007,7 +1197,7 @@ export async function enqueueQuestionsImportJob(
   }
 
   setImmediate(() => {
-    runQuestionsImportJobWorker(jobId, batchId, questions, createTaxonomy).catch((err) => {
+    runQuestionsImportJobWorker(jobId, batchId, questions, createTaxonomy, duplicateStrategy).catch((err) => {
       logger.error(`[ImportJobWorker] Unhandled error in background worker for job ${jobId}: ${err.message}`);
     });
   });
@@ -1019,7 +1209,8 @@ async function runQuestionsImportJobWorker(
   jobId: string,
   batchId: string,
   questions: RawImportRow[],
-  createTaxonomy: any[] = []
+  createTaxonomy: any[] = [],
+  duplicateStrategy: 'skip' | 'overwrite' | 'keep_both' = 'skip'
 ) {
   const activePool = getPgPool();
   let processedRows = 0;
@@ -1164,7 +1355,16 @@ async function runQuestionsImportJobWorker(
               tagsArr = q.tags.split(',').map((t) => t.trim()).filter(Boolean);
             }
 
-            const questionId = q.id || `q_${q.subject_id || 'phy'}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+            // Step 6: Duplicate handling strategy filter in worker
+            if (duplicateStrategy === 'skip' && (q as any).isDuplicate) {
+              processedRows++;
+              continue;
+            }
+
+            let questionId = q.id;
+            if (duplicateStrategy === 'keep_both' || !questionId) {
+              questionId = `q_${q.subject_id || 'phy'}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+            }
             const paperStr = q.paper === 2 || q.paper === '2' || q.paper === '2nd' ? '2nd' : '1st';
 
             await client.query(upsertQuestionSql, [

@@ -60,7 +60,7 @@ import {
   getActiveUsersTelemetryFromDb,
   getQuestionCounts,
 } from './server/db.js';
-import { resolveQuestionsImport, commitQuestionsImport, rollbackImportBatch, enqueueQuestionsImportJob, getImportJobStatus } from './server/services/importService.js';
+import { resolveQuestionsImport, commitQuestionsImport, rollbackImportBatch, enqueueQuestionsImportJob, getImportJobStatus, checkQuestionsDuplicates } from './server/services/importService.js';
 import {
   getTaxonomyTreeService,
   getTaxonomyHealthService,
@@ -1788,6 +1788,31 @@ app.post('/api/admin/questions/import-preview', authenticateAdmin, async (req: R
   }
 });
 
+// POST /api/admin/questions/check-duplicates (Step 6: Duplicate Question Detection Engine)
+app.post('/api/admin/questions/check-duplicates', authenticateAdmin, async (req: Request, res: Response) => {
+  try {
+    let rawQuestions: any[] = [];
+    if (Array.isArray(req.body)) {
+      rawQuestions = req.body;
+    } else if (req.body && Array.isArray(req.body.questions)) {
+      rawQuestions = req.body.questions;
+    }
+
+    if (!rawQuestions || rawQuestions.length === 0) {
+      return res.status(400).json({ error: 'No questions provided for duplicate check' });
+    }
+
+    const dupCheckResult = await checkQuestionsDuplicates(rawQuestions);
+    return res.status(200).json({
+      success: true,
+      ...dupCheckResult,
+    });
+  } catch (error: any) {
+    console.error('Error in check-duplicates:', error);
+    return res.status(500).json({ error: 'Duplicate detection failed', details: error.message });
+  }
+});
+
 // POST /api/admin/questions/import-commit (Transactional Commit with Taxonomy Upsert & Counter Refresh - Protected Admin)
 app.post('/api/admin/questions/import-commit', authenticateAdmin, async (req: Request, res: Response) => {
   try {
@@ -1872,7 +1897,8 @@ app.post(
       }
 
       const createTaxonomy = Array.isArray(req.body.createTaxonomy) ? req.body.createTaxonomy : [];
-      const jobRes = await enqueueQuestionsImportJob(rawQuestions, createTaxonomy);
+      const duplicateStrategy = req.body.duplicateStrategy || 'skip';
+      const jobRes = await enqueueQuestionsImportJob(rawQuestions, createTaxonomy, duplicateStrategy);
 
       return res.status(202).json({
         success: true,

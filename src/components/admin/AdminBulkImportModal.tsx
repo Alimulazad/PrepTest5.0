@@ -57,7 +57,8 @@ import {
   bulkImportTopicsApi,
   bulkImportKnowledgeSnippetsApi,
   fetchTopics,
-  createTopic
+  createTopic,
+  checkQuestionsDuplicatesApi
 } from '../../services/api';
 
 interface AdminBulkImportModalProps {
@@ -138,7 +139,7 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
   const [isCreatingMissingTopics, setIsCreatingMissingTopics] = useState<boolean>(false);
   const [autoCreateSuccessMsg, setAutoCreateSuccessMsg] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [previewFilter, setPreviewFilter] = useState<'all' | 'valid' | 'warning' | 'invalid' | 'missing_taxonomy'>('all');
+  const [previewFilter, setPreviewFilter] = useState<'all' | 'valid' | 'warning' | 'invalid' | 'missing_taxonomy' | 'duplicate'>('all');
 
   // Step 5: Taxonomical Mapping Auto-Resolution State
   const [isResolvingTaxonomy, setIsResolvingTaxonomy] = useState<boolean>(false);
@@ -148,6 +149,16 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
     fullyResolvedCount: number;
     ambiguousCount: number;
     missingTaxonomyCount: number;
+  } | null>(null);
+
+  // Step 6: Duplicate Question Detection Engine & Strategy State
+  const [duplicateStrategy, setDuplicateStrategy] = useState<'skip' | 'overwrite' | 'keep_both'>('skip');
+  const [isCheckingDuplicates, setIsCheckingDuplicates] = useState<boolean>(false);
+  const [duplicateSummary, setDuplicateSummary] = useState<{
+    totalDuplicates: number;
+    exactCount: number;
+    similarCount: number;
+    intraBatchCount: number;
   } | null>(null);
 
   // Committed Batch & Rollback State (Step 2 Implementation)
@@ -655,13 +666,115 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
           return q;
         });
 
-        setParsedQuestions(updated);
+        // Step 6: Process duplicate check from preview response if present
+        if (previewRes.duplicateCheck) {
+          const dupRes = previewRes.duplicateCheck;
+          setDuplicateSummary({
+            totalDuplicates: dupRes.duplicateCount,
+            exactCount: dupRes.exactDuplicates.length,
+            similarCount: dupRes.similarDuplicates.length,
+            intraBatchCount: dupRes.intraBatchDuplicates.length,
+          });
+
+          const exactMap = new Map(dupRes.exactDuplicates.map((d: any) => [d.rowIndex, d]));
+          const similarMap = new Map(dupRes.similarDuplicates.map((d: any) => [d.rowIndex, d]));
+          const intraMap = new Map(dupRes.intraBatchDuplicates.map((d: any) => [d.rowIndex, d]));
+
+          const updatedWithDups = updated.map((q, idx) => {
+            const exact = exactMap.get(idx);
+            const similar = similarMap.get(idx);
+            const intra = intraMap.get(idx);
+
+            if (exact || similar || intra) {
+              const dupInfo = exact || similar || intra;
+              const note = exact
+                ? `⚠️ ডুপ্লিকেট প্রশ্ন (#${dupInfo.matchedQuestionId} - 100% Match)`
+                : similar
+                ? `⚠️ সমজাতীয় প্রশ্ন (#${dupInfo.matchedQuestionId} - ${Math.round(dupInfo.similarity * 100)}% Match)`
+                : `⚠️ ফাইলে ২ বার পাওয়া গেছে (#${dupInfo.matchedQuestionId})`;
+
+              return {
+                ...q,
+                isDuplicate: true,
+                duplicateId: dupInfo.matchedQuestionId,
+                duplicateSimilarity: dupInfo.similarity,
+                duplicateMatchType: dupInfo.matchType,
+                status: q.status === 'invalid' ? ('invalid' as const) : ('warning' as const),
+                isWarning: true,
+                smartMappedNote: q.smartMappedNote ? `${q.smartMappedNote} | ${note}` : note,
+              };
+            }
+            return q;
+          });
+
+          setParsedQuestions(updatedWithDups);
+        } else {
+          setParsedQuestions(updated);
+        }
       }
     } catch (err: any) {
       console.error('Taxonomy resolution error:', err);
       setSubmitError(`ট্যাক্সোনমি রেজোলিউশন ব্যর্থ: ${err.message || 'অজানা সমস্যা'}`);
     } finally {
       setIsResolvingTaxonomy(false);
+    }
+  };
+
+  // Step 6: Dedicated Manual Duplicate Check Trigger
+  const handleCheckDuplicates = async () => {
+    if (parsedQuestions.length === 0) return;
+
+    setIsCheckingDuplicates(true);
+    setSubmitError(null);
+
+    try {
+      const res = await checkQuestionsDuplicatesApi({ questions: parsedQuestions });
+      if (res && res.success) {
+        setDuplicateSummary({
+          totalDuplicates: res.duplicateCount,
+          exactCount: res.exactDuplicates.length,
+          similarCount: res.similarDuplicates.length,
+          intraBatchCount: res.intraBatchDuplicates.length,
+        });
+
+        const exactMap = new Map(res.exactDuplicates.map((d: any) => [d.rowIndex, d]));
+        const similarMap = new Map(res.similarDuplicates.map((d: any) => [d.rowIndex, d]));
+        const intraMap = new Map(res.intraBatchDuplicates.map((d: any) => [d.rowIndex, d]));
+
+        const updated = parsedQuestions.map((q, idx) => {
+          const exact = exactMap.get(idx);
+          const similar = similarMap.get(idx);
+          const intra = intraMap.get(idx);
+
+          if (exact || similar || intra) {
+            const dupInfo = exact || similar || intra;
+            const note = exact
+              ? `⚠️ ডুপ্লিকেট প্রশ্ন (#${dupInfo.matchedQuestionId} - 100% Match)`
+              : similar
+              ? `⚠️ সমজাতীয় প্রশ্ন (#${dupInfo.matchedQuestionId} - ${Math.round(dupInfo.similarity * 100)}% Match)`
+              : `⚠️ ফাইলে ২ বার পাওয়া গেছে (#${dupInfo.matchedQuestionId})`;
+
+            return {
+              ...q,
+              isDuplicate: true,
+              duplicateId: dupInfo.matchedQuestionId,
+              duplicateSimilarity: dupInfo.similarity,
+              duplicateMatchType: dupInfo.matchType,
+              status: q.status === 'invalid' ? ('invalid' as const) : ('warning' as const),
+              isWarning: true,
+              smartMappedNote: q.smartMappedNote ? `${q.smartMappedNote} | ${note}` : note,
+            };
+          }
+          return q;
+        });
+
+        setParsedQuestions(updated);
+      }
+    } catch (err: any) {
+      console.error('Duplicate detection error:', err);
+      setSubmitError(`ডুপ্লিকেট চেক ব্যর্থ: ${err.message || 'অজানা সমস্যা'}`);
+    } finally {
+      setIsCheckingDuplicates(false);
     }
   };
 
@@ -1032,6 +1145,7 @@ Ans: A
         const jobRes = await importQuestionsAsyncApi({
           questions: formatted,
           createTaxonomy: createTaxonomyPayload.length > 0 ? createTaxonomyPayload : undefined,
+          duplicateStrategy,
         });
 
         setActiveJob({
@@ -1782,6 +1896,77 @@ Ans: A
             <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-300 text-xs font-bold text-emerald-900 flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
               <span>{autoCreateSuccessMsg}</span>
+            </div>
+          )}
+
+          {/* STEP 6: DUPLICATE CHECK & STRATEGY */}
+          {parsedQuestions.length > 0 && importType === 'mcq' && (
+            <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                    <CheckCircle2 className="w-5 h-5 text-indigo-600" />
+                    <span>ধাপ ৬: ডুপ্লিকেট চেকার (Duplicate Detection)</span>
+                  </h4>
+                  <p className="text-xs text-slate-500 mt-1">
+                    বর্তমান ফাইলের সাথে ডাটাবেজের বিদ্যমান প্রশ্নের সামঞ্জস্য চেক করুন।
+                  </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="font-bold text-slate-700">হ্যান্ডলিং কৌশল:</span>
+                    <select
+                      value={duplicateStrategy}
+                      onChange={(e) => setDuplicateStrategy(e.target.value as any)}
+                      className="px-3 py-1.5 rounded-xl border border-slate-300 bg-slate-50 text-slate-800 font-semibold focus:ring-2 focus:ring-indigo-500"
+                    >
+                      <option value="skip">স্কিপ করুন (Skip Duplicates)</option>
+                      <option value="keep_both">উভয় রাখুন (Keep Both / Force Add)</option>
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCheckDuplicates}
+                    disabled={isCheckingDuplicates}
+                    className="px-4 py-2 rounded-xl bg-indigo-100 hover:bg-indigo-200 text-indigo-700 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {isCheckingDuplicates ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        চেক করা হচ্ছে...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="w-4 h-4" />
+                        ডুপ্লিকেট চেক করুন
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {duplicateSummary && (
+                <div className="flex flex-wrap items-center gap-3 text-xs pt-3 border-t border-slate-100">
+                  <span className={`px-2.5 py-1 rounded-lg font-bold ${duplicateSummary.totalDuplicates === 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                    সর্বমোট ডুপ্লিকেট: {duplicateSummary.totalDuplicates} টি
+                  </span>
+                  {duplicateSummary.exactCount > 0 && (
+                    <span className="px-2.5 py-1 rounded-lg bg-red-100 text-red-800 font-semibold">
+                      ১০০% মিল: {duplicateSummary.exactCount} টি
+                    </span>
+                  )}
+                  {duplicateSummary.similarCount > 0 && (
+                    <span className="px-2.5 py-1 rounded-lg bg-orange-100 text-orange-800 font-semibold">
+                      সমজাতীয়: {duplicateSummary.similarCount} টি
+                    </span>
+                  )}
+                  {duplicateSummary.intraBatchCount > 0 && (
+                    <span className="px-2.5 py-1 rounded-lg bg-amber-100 text-amber-800 font-semibold">
+                      ফাইলের ভেতরে: {duplicateSummary.intraBatchCount} টি
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

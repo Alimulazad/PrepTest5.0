@@ -779,11 +779,18 @@ export interface ImportPreviewApiResponse {
     fullyResolvedCount: number;
     ambiguousCount: number;
     missingTaxonomyCount: number;
+    duplicateCount?: number;
     canDirectlyCommit: boolean;
   };
   fullyResolvedRows: any[];
   ambiguousRows: any[];
   missingTaxonomyRows: any[];
+  duplicateCheck?: {
+    duplicateCount: number;
+    exactDuplicates: any[];
+    similarDuplicates: any[];
+    intraBatchDuplicates: any[];
+  };
   taxonomyTree: any[];
   error?: string;
   details?: string;
@@ -827,6 +834,7 @@ export async function importQuestionsPreviewApi(payload: {
 export async function importQuestionsCommitApi(payload: {
   questions: any[];
   createTaxonomy?: any[];
+  duplicateStrategy?: 'skip' | 'overwrite' | 'keep_both';
 }): Promise<ImportCommitApiResponse> {
   const response = await fetchWithRetry(getApiUrl('/api/admin/questions/import-commit'), {
     method: 'POST',
@@ -841,6 +849,30 @@ export async function importQuestionsCommitApi(payload: {
     errorObj.details = resData.details;
     errorObj.status = response.status;
     throw errorObj;
+  }
+
+  return resData;
+}
+
+export async function checkQuestionsDuplicatesApi(payload: {
+  questions: any[];
+}): Promise<{
+  success: boolean;
+  duplicateCount: number;
+  exactDuplicates: any[];
+  similarDuplicates: any[];
+  intraBatchDuplicates: any[];
+}> {
+  const response = await fetchWithRetry(getApiUrl('/api/admin/questions/check-duplicates'), {
+    method: 'POST',
+    headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload),
+  });
+
+  const resData = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(resData.error || 'ডুপ্লিকেট প্রশ্ন চেক করতে ব্যর্থ হয়েছে');
   }
 
   return resData;
@@ -2101,6 +2133,7 @@ export async function rollbackQuestionsImportApi(batchId: string): Promise<{
 export async function importQuestionsAsyncApi(payload: {
   questions: any[];
   createTaxonomy?: any[];
+  duplicateStrategy?: 'skip' | 'overwrite' | 'keep_both';
 }): Promise<{
   success: boolean;
   jobId: string;
