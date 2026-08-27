@@ -1,0 +1,10 @@
+{
+  "name": "Alimulazad2-final10-PrepTest4.0",
+  "description": "Comprehensive admission preparation platform for Bangladeshi universities featuring smart question banks, mock exams, physics \u0026 math solver with LaTeX, error logs, and Gemini AI tutor inspired by Chorcha.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

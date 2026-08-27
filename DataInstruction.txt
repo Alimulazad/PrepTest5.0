@@ -1,0 +1,627 @@
+# PrepTest (টেস্ট দাও বেস্ট হও) — Complete Data Specification & Admin Import Manual
+
+**Document Version:** 4.0 (Production Multi-Entity & Multi-Format Specification)  
+**Target Audience:** Content Operators, AI Prompters, OCR Engineers, Admins, Database Managers  
+**Supported Entities:** 1. MCQ Questions (`questions`) | 2. Written Questions (`written_questions`) | 3. Topics & Subtopics (`topics`) | 4. Knowledge Snippets (`knowledge_snippets`)  
+**Supported Import Formats:** JSON (`.json`), CSV (`.csv`), Excel (`.xlsx`)
+
+---
+
+## ১. ওভারভিউ ও প্রজেক্ট ডেটা আর্কিটেকচার (Overview)
+
+PrepTest (টেস্ট দাও বেস্ট হও) অ্যাপের এডুকেশনাল কনটেন্ট ইঞ্জিন ৪টি মূল ডেটা এনটিটি দ্বারা পরিচালিত:
+1. **MCQ Questions (`Question`):** বিশ্ববিদ্যালয় ও মেডিকেল ভর্তি পরীক্ষার বহুনির্বাচনী প্রশ্ন, অপশন, সঠিক উত্তর, ব্যাখ্যা ও ট্যাগ।
+2. **Written Questions (`WrittenQuestion`):** ইঞ্জিনিয়ারিং ও ভার্সিটি ক ইউনিটের বর্ণনামূলক/লিখিত প্রশ্ন, চিত্র, বিস্তারিত ধাপভিত্তিক গাণিতিক সমাধান।
+3. **Topics & Subtopics (`TopicRecord`):** অধ্যায়ের অধীনে টপিকভিত্তিক সাজানো সূচিপত্র, টপিক কোড, স্টার রেটিং এবং ভর্তি পরীক্ষায় আসার পরিসংখ্যান।
+4. **Knowledge Snippets (`KnowledgeSnippet`):** হোমস্ক্রিন ও ক্যারোসেলের জন্য ইম্পর্টেন্ট কনসেপ্ট, শর্টকাট টেকনিক, সূত্র, জিকের ছোট স্লাইড।
+
+আমাদের প্ল্যাটফর্মে টেক্সটের সাথে **KaTeX / LaTeX (গাণিতিক সূত্র)** এবং **TikZ (ভেক্টর ড্রয়িং ও চিত্র)** সরাসরি ক্লায়েন্ট ও সার্ভার উভয় স্থানে হাই-পারফরম্যান্সে রেন্ডার হয়।
+
+---
+
+## ১.১ ৪-স্তরের (4-Layer) প্রশ্ন ফিল্টারিং ও রেন্ডারিং আর্কিটেকচার
+
+ভবিষ্যতে যে কোনো উপায়ে (Excel/CSV, JSON, কিংবা এডমিন প্যানেলের ফর্ম) প্রশ্ন আপলোড করলেও যেন ফিল্টারিং ১০০% নির্ভুল, স্বয়ংক্রিয় এবং বাগমুক্ত থাকে—তার জন্য ৪-স্তরের আর্কিটেকচার বাস্তবায়িত:
+
+১. **ডাটাবেজ রিলেশনাল আর্কিটেকচার (Single Source of Truth):**
+   - `questions` ও `written_questions` টেবিলে `topic_id` কলামটি সরাসরি `topics.id` এর সাথে ফরেন কি ও কম্পাউন্ড ইনডেক্স (`topic_id, category`, `chapter_id, topic_id`) দ্বারা যুক্ত।
+   - টপিক নাম পরিবর্তন হলেও ফিল্টারিং ক্ষতিগ্রস্ত হয় না।
+
+২. **স্মার্ট অ্যাডমিন ইমপোর্ট পাইপলাইন (Auto-Resolver & Sanitize):**
+   - এক্সেল/সিএসভি/জেসন আপলোডের সময় যদি ইউজার শুধু টপিক নাম দেয়, তবে সিস্টেম স্বয়ংক্রিয়ভাবে ডাটাবেজ থেকে ম্যাচ করে সঠিক `topic_id` বসিয়ে দেয়।
+   - কাস্টম টপিক আইডি দেওয়া হলে তা হুবহু সংরক্ষিত থাকে এবং প্রয়োজনে ডেটাবেজে টপিক তৈরি করে নেওয়া যায়।
+   - অ্যাডমিন প্যানেল থেকে নির্দিষ্ট সংখ্যক বা নির্বাচিত প্রশ্নের জন্য ব্যাচ টপিক ও আইডি অ্যাসাইন করা যায়।
+
+৩. **ডাইনামিক কাউন্টার ও অটো-সিঙ্ক সিস্টেম (Dynamic Counter & Migration System):**
+   - `topics` টেবিলে `varsity_a_count`, `engineering_count`, `medical_count`, `academic_count`, `main_book_count`, `mcq_count`, `written_count` কলামগুলো রিয়েল-টাইম সাবকোয়েরি এবং সিঙ্ক এন্ডপয়েন্ট (`/api/admin/heal-database` ও `/api/topics/stats`) দ্বারা স্বয়ংক্রিয়ভাবে নির্ভুল থাকে।
+
+৪. **ফ্রন্টএন্ড ফিল্টারিং স্টেট মেশিন (Frontend State Machine):**
+   - ইউজার ইন্টারফেসে টেক্সট ম্যাচিংয়ের বদলে ইউনিক `topic_id` ও `category` ভিত্তিক ফিল্টারিং সক্রিয়, ফলে বানান ভিন্নতার কারণে প্রশ্ন গায়েব হওয়ার কোনো সুযোগ নেই।
+
+---
+
+## ২. গাণিতিক সূত্র ও চিত্র রেন্ডারিং নিয়ম (LaTeX & KaTeX & TikZ Rules)
+
+### A. LaTeX / KaTeX Syntax Rules
+১. **ইনলাইন সমীকরণ (Inline Math):** মূল বাক্য বা প্যারাগ্রাফের ভেতরে ছোট প্রতীক বা সূত্র লিখতে একক ডলার চিহ্ন `$ ... $` ব্যবহার করুন।
+   - *উদাহরণ:* `যদি $\vec{A} \cdot \vec{B} = 0$ হয়, তবে ভেক্টরদ্বয় পরস্পর লম্ব।`
+২. **ডিসপ্লে সমীকরণ (Block Math / Display Math):** সমীকরণকে আলাদা লাইনে বড় ও স্পষ্টভাবে দেখাতে ডাবল ডলার চিহ্ন `$$ ... $$` ব্যবহার করুন।
+   - *উদাহরণ:* `$$W = \int_{x_1}^{x_2} F \, dx = \frac{1}{2}k(x_2^2 - x_1^2)$$`
+৩. **টেক্সট ও ফন্ট স্টাইলিং:** ল্যাটেক্স সূত্রের ভেতর বাংলা বা সাধারণ টেক্সট বা একক রাখতে `\text{...}` ব্যবহার করুন।
+   - *উদাহরণ:* `$250\text{ mL}$`, `$10\text{ ms}^{-1}$`, `$\text{Na}_2\text{CO}_3$`
+৪. **সাধারণ প্রতীক ও কমান্ড:**
+   - ভগ্নাংশ: `\frac{numerator}{denominator}` (যেমন: `\frac{a+b}{c}`)
+   - বর্গমূল: `\sqrt{x}` বা `\sqrt[n]{x}`
+   - ভেক্টর: `\vec{A}` বা `\mathbf{v}`
+   - গ্রিক অক্ষর: `\alpha`, `\beta`, `\theta`, `\lambda`, `\omega`, `\Delta`, `\varepsilon`
+   - ইন্টিগ্রাল ও লিমিট: `\int_{a}^{b}`, `\lim_{x \to 0}`
+   - ম্যাট্রিক্স: `\begin{pmatrix} a & b \\ c & d \end{pmatrix}`
+
+### B. ফরম্যাট ভেদে ব্যাকস্ল্যাশ এস্কেপিং (Backslash Escaping Rules)
+- **JSON ফরম্যাটে:** JSON স্ট্রিং ব্যাকস্ল্যাশকে এস্কেপ ক্যারেক্টার হিসেবে ধরে। তাই JSON ফাইলে ল্যাটেক্স লেখার সময় **অবশ্যই ডাবল ব্যাকস্ল্যাশ `\\`** ব্যবহার করতে হবে।
+  - *ভুল:* `"question_text": "$\frac{a}{b}$"`
+  - *সঠিক (JSON):* `"question_text": "$\\frac{a}{b}$"`
+- **CSV এবং Excel (.xlsx) ফরম্যাটে:** সরাসরি একক ব্যাকস্ল্যাশ `\` ব্যবহার করবেন।
+  - *সঠিক (CSV/Excel):* `$\frac{a}{b}$`
+
+### C. TikZ ভেক্টর ডায়গ্রাম নিয়ম (TikZ Diagram Integration)
+প্রশ্ন বা ব্যাখ্যার ভেতরে যদি কোনো ভেক্টর চিত্র, সার্কিট ডায়াগ্রাম বা কোঅর্ডিনেট গ্রাফ থাকে, তবে এক্সটার্নাল ইমেজের বদলে TikZ কোড যুক্ত করা যাবে:
+- TikZ কোড সব সময় `\begin{tikzpicture}[scale=1.0] ... \end{tikzpicture}` ট্যাগের ভেতর রাখতে হবে।
+- *JSON এস্কেপড উদাহরণ:* `\\begin{tikzpicture}[scale=1.0] \\draw[->, thick, blue] (0,0) -- (2,0) node[midway, below] {\\( \\vec{A} \\)}; \\end{tikzpicture}`
+
+---
+
+## ৩. মাস্টার এনটিটি স্কিমা স্পেসিফিকেশন (Core Data Schemas)
+
+### A. MCQ Question Schema (`questions`)
+
+| Field Name | Type | Req | Description & Allowed Values | JSON Key | CSV/Excel Column |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `id` | `string` | No | ইউনিক আইডি (যেমন: `q_phy1_ch2_001`) | `id` | `id` |
+| `subject_id` | `string` | **Yes** | বিষয়ের আইডি (যেমন: `physics_1`, `math_2`) | `subject_id` | `subject_id` |
+| `subject_name` | `string` | **Yes** | বিষয়ের পূর্ণ বাংলা নাম (যেমন: `"পদার্থবিজ্ঞান ১ম পত্র"`) | `subject_name` | `subject_name` |
+| `paper` | `string` | **Yes** | `"1st"`, `"2nd"`, অথবা `"all"` | `paper` | `paper` |
+| `chapter_id` | `string` | **Yes** | অধ্যায়ের স্ট্যান্ডার্ড আইডি (যেমন: `phy1_ch2`) | `chapter_id` | `chapter_id` |
+| `chapter_name` | `string` | **Yes** | অধ্যায়ের বাংলা নাম (যেমন: `"ভেক্টর"`) | `chapter_name` | `chapter_name` |
+| `topic_id` | `string` | No | টপিক আইডি (যেমন: `p1c2_s1`) | `topic_id` | `topic_id` |
+| `topic_name` | `string` | No | টপিকের বাংলা নাম (যেমন: `"ভেক্টর ডট গুণন"`) | `topic_name` | `topic_name` |
+| `category` | `string` | No | `'engineering'`, `'varsity_a'`, `'medical'`, `'academic'`, `'main_book'` | `category` | `category` |
+| `question_text` | `string` | **Yes** | মূল প্রশ্ন (বাংলা টেক্সট + LaTeX `$..$`) | `question_text` | `question_text` |
+| `options` | `object` / `columns` | **Yes** | অপশনসমূহ। JSON-এ `{"A": "..", "B": "..", "C": "..", "D": ".."}`। CSV/Excel-এ `option_a`, `option_b`, `option_c`, `option_d` অথবা JSON string | `options` | `option_a`, `option_b`, `option_c`, `option_d` (অথবা `options`) |
+| `correct_ans` | `string` | **Yes** | সঠিক উত্তর: `"A"`, `"B"`, `"C"`, বা `"D"` | `correct_ans` | `correct_ans` |
+| `explanation` | `string` | **Yes** | বিস্তারিত সমাধান ও শর্টকাট ব্যাখ্য | `explanation` | `explanation` |
+| `explanation_latex` | `string` | No | ব্যাখ্যার প্রধান ল্যাটেক্স সূত্র | `explanation_latex` | `explanation_latex` |
+| `question_image_url` | `string` | No | প্রশ্নের ইমেজের URL | `question_image_url` | `question_image_url` |
+| `explanation_image_url` | `string` | No | ব্যাখ্যার ইমেজের URL | `explanation_image_url` | `explanation_image_url` |
+| `tags` | `array[string]` | **Yes** | যেমন: `["DU 23-24", "BUET 22-23"]` (CSV-তে JSON array বা `DU 23-24, BUET 22-23`) | `tags` | `tags` |
+| `star_rating` | `number` | **Yes** | `1` (সাধারণ), `2` (গুরুত্বপূর্ণ), `3` (টপ মোস্ট কমন) | `star_rating` | `star_rating` |
+| `type` | `string` | **Yes** | `"mcq"` | `type` | `type` |
+| `difficulty` | `string` | No | `"easy"`, `"medium"`, অথবা `"hard"` | `difficulty` | `difficulty` |
+
+---
+
+### B. Written Question Schema (`written_questions`)
+
+| Field Name | Type | Req | Description & Allowed Values | JSON Key | CSV/Excel Column |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `id` | `string` | No | ইউনিক আইডি (যেমন: `wq_phy2_ch1_001`) | `id` | `id` |
+| `subject_id` | `string` | **Yes** | বিষয়ের আইডি (যেমন: `physics_2`, `math_1`) | `subject_id` | `subject_id` |
+| `subject_name` | `string` | **Yes** | বিষয়ের পূর্ণ বাংলা নাম (যেমন: `"পদার্থবিজ্ঞান ২য় পত্র"`) | `subject_name` | `subject_name` |
+| `paper` | `string` | **Yes** | `"1st"`, `"2nd"`, অথবা `"all"` | `paper` | `paper` |
+| `chapter_id` | `string` | **Yes** | অধ্যায়ের আইডি (যেমন: `phy2_ch1`) | `chapter_id` | `chapter_id` |
+| `chapter_name` | `string` | **Yes** | অধ্যায়ের বাংলা নাম (যেমন: `"তাপগতিবিদ্যা"`) | `chapter_name` | `chapter_name` |
+| `topic_id` | `string` | No | টপিক আইডি (যেমন: `p2c1_s2`) | `topic_id` | `topic_id` |
+| `topic_name` | `string` | No | টপিকের বাংলা নাম (যেমন: `"এনট্রপি"`) | `topic_name` | `topic_name` |
+| `question_number` | `number` | No | লিখিত প্রশ্নের ক্রমিক নম্বর (যেমন: `1`, `2`) | `question_number` | `question_number` |
+| `question_text` | `string` | **Yes** | বিস্তারিত লিখিত প্রশ্ন (বাংলা + LaTeX) | `question_text` | `question_text` |
+| `question_image_url` | `string` | No | লিখিত প্রশ্নের চিত্র URL | `question_image_url` | `question_image_url` |
+| `explanation` | `string` | **Yes** | বিস্তারিত বাংলা লিখিত উত্তর ও ধাপ | `explanation` | `explanation` |
+| `explanation_latex` | `string` | No | চূড়ান্ত ল্যাটেক্স সমীকরণ / উত্তর | `explanation_latex` | `explanation_latex` |
+| `explanation_image_urls` | `array[string]` | No | সমাধানের চিত্রসমূহের URL Array (`["url1", "url2"]`) | `explanation_image_urls` | `explanation_image_urls` |
+| `tags` | `array[string]` | **Yes** | যেমন: `["KhU B 24-25 (Written)", "DU A 24-25"]` | `tags` | `tags` |
+| `category` | `string` | No | `'engineering'`, `'varsity_a'`, `'medical'`, `'academic'` | `category` | `category` |
+| `difficulty` | `string` | No | `"easy"`, `"medium"`, অথবা `"hard"` | `difficulty` | `difficulty` |
+| `star_rating` | `number` | No | `1`, `2`, অথবা `3` | `star_rating` | `star_rating` |
+
+---
+
+### C. Topic Record Schema (`topics`)
+
+| Field Name | Type | Req | Description & Allowed Values | JSON Key | CSV/Excel Column |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `id` | `string` | **Yes** | টপিক আইডি (যেমন: `p1c2_s1`) | `id` | `id` |
+| `chapter_id` | `string` | **Yes** | সংশ্লিষ্ট অধ্যায়ের আইডি (যেমন: `phy1_ch2`) | `chapter_id` | `chapter_id` |
+| `subject_id` | `string` | No | বিষয়ের আইডি (যেমন: `physics_1`) | `subject_id` | `subject_id` |
+| `paper` | `string` | No | `"1st"` অথবা `"2nd"` | `paper` | `paper` |
+| `topic_code` | `string` | No | টপিক শর্টকোড (যেমন: `"T-01"`, `"T-02"`) | `topic_code` | `topic_code` |
+| `name` | `string` | **Yes** | ইংরেজিতে টপিকের নাম | `name` | `name` |
+| `bangla_name` | `string` | **Yes** | বাংলায় টপিকের নাম | `bangla_name` | `bangla_name` |
+| `star_rating` | `number` | No | গুরুত্ব: `1`, `2`, বা `3` | `star_rating` | `star_rating` |
+| `mcq_count` | `number` | No | কতটি MCQ আছে | `mcq_count` | `mcq_count` |
+| `written_count` | `number` | No | কতটি লিখিত প্রশ্ন আছে | `written_count` | `written_count` |
+| `exam_occurrences` | `object` / `string` | No | ভর্তি পরীক্ষায় আসা সাল তথ্য: `{"mcq": "DU 23-24", "written": "DU 24-25"}` | `exam_occurrences` | `exam_occurrences` |
+| `key_points` | `array[string]` | No | মূল পয়েন্টসমূহের অ্যারে `["Point 1", "Point 2"]` | `key_points` | `key_points` |
+
+---
+
+### D. Knowledge Snippet Schema (`knowledge_snippets`)
+
+| Field Name | Type | Req | Description & Allowed Values | JSON Key | CSV/Excel Column |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `id` | `string` | No | আইডি (যেমন: `ks_phy1_001`) | `id` | `id` |
+| `type` | `string` | **Yes** | `'concept'`, `'formula'`, `'shortcut'`, `'gk'`, `'quote'`, `'announcement'` | `type` | `type` |
+| `title_bn` | `string` | No | স্লাইড বা কার্ডের বাংলা শিরোনাম | `title_bn` | `title_bn` |
+| `content_bn` | `string` | **Yes** | স্লাইডের মূল বাংলা কনটেন্ট/বিবরণ | `content_bn` | `content_bn` |
+| `content_latex` | `string` | No | স্লাইডের গাণিতিক সূত্র (LaTeX) | `content_latex` | `content_latex` |
+| `answer_bn` | `string` | No | ঐচ্ছিক উত্তর বা ব্যাখ্যা | `answer_bn` | `answer_bn` |
+| `subject_id` | `string` | No | বিষয়ের আইডি | `subject_id` | `subject_id` |
+| `theme` | `string` | No | `'blue_royal'`, `'dark_navy'`, `'emerald_green'`, `'amber_gold'`, `'purple_violet'`, `'rose_crimson'`, `'cyber_cyan'`, `'sunset_orange'`, `'charcoal_dark'` | `theme` | `theme` |
+| `textSize` | `string` | No | `'small'`, `'normal'`, `'medium'`, `'large'` | `textSize` | `textSize` |
+| `customDuration` | `number` | No | স্লাইড ডুরেশন (সেকেন্ডে, যেমন: `7`) | `customDuration` | `customDuration` |
+| `actionButton` | `object` / `string` | No | অ্যাকশন বাটন JSON: `{"enabled":true,"text":"Practice","link":"/question-bank"}` | `actionButton` | `actionButton` |
+| `pinned` | `boolean` | No | পিন করা থাকবে কিনা (`true` / `false`) | `pinned` | `pinned` |
+| `active` | `boolean` / `number` | No | সক্রিয় কিনা (`true` / `1`) | `active` | `active` |
+
+---
+
+## ৪. নির্ভুল ফিল্টারিংয়ের জন্য মাস্টার আইডি ও ট্যাগ স্ট্যান্ডার্ড (Master ID & Tag Standard Specification)
+
+বর্তমান অ্যাপের সেন্ট্রালাইজড ফিল্টারিং ইঞ্জিন (`src/utils/questionFilter.ts`), ডেটাবেজ স্কিমা এবং ফ্রন্টএন্ড স্টেট মেশিনের সাথে ১০০% সামঞ্জস্য রেখে নির্ভুল ডেটা আপলোডের জন্য নিচের স্ট্যান্ডার্ড ফরম্যাটসমূহ অনুসরণ করুন:
+
+---
+
+### ৪.১ বিষয় আইডি স্ট্যান্ডার্ড (`subject_id` & `paper`)
+
+অ্যাপের সব বিষয়ের জন্য প্রাইমারি ক্যানোনিক্যাল আইডি এবং সংশ্লিষ্ট পত্র (Paper) নির্ধারিত:
+
+| Subject ID | বিষয় (Subject Name) | পত্র (Paper) | শর্টকোড (Short Code) | ক্যাটাগরি | সাপোর্টেড স্বয়ংক্রিয় আলিয়াস |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `physics_1` | পদার্থবিজ্ঞান ১ম পত্র | `1st` | `PHY-1` | science | `phy1`, `phy_1`, `physics1`, `phy_p1` |
+| `physics_2` | পদার্থবিজ্ঞান ২য় পত্র | `2nd` | `PHY-2` | science | `phy2`, `phy_2`, `physics2`, `phy_p2` |
+| `chemistry_1` | রসায়ন ১ম পত্র | `1st` | `CHEM-1` | science | `chem1`, `chem_1`, `chemistry1`, `chem_p1` |
+| `chemistry_2` | রসায়ন ২য় পত্র | `2nd` | `CHEM-2` | science | `chem2`, `chem_2`, `chemistry2`, `chem_p2` |
+| `math_1` | উচ্চতর গণিত ১ম পত্র | `1st` | `MATH-1` | science | `math1`, `math_1`, `higher_math_1`, `mat_p1` |
+| `math_2` | উচ্চতর গণিত ২য় পত্র | `2nd` | `MATH-2` | science | `math2`, `math_2`, `higher_math_2`, `mat_p2` |
+| `biology_1` | জীববিজ্ঞান ১ম পত্র (উদ্ভিদবিজ্ঞান) | `1st` | `BIO-1` | science | `bio1`, `bio_1`, `botany`, `bio_p1` |
+| `biology_2` | জীববিজ্ঞান ২য় পত্র (প্রাণিবিজ্ঞান) | `2nd` | `BIO-2` | science | `bio2`, `bio_2`, `zoology`, `bio_p2` |
+| `ict` | তথ্য ও যোগাযোগ প্রযুক্তি | `all` | `ICT` | science | `ict_all`, `information_technology` |
+| `bangla` | বাংলা | `all` | `BANGLA` | general | `bangla_1`, `bangla_all` |
+| `english` | ইংরেজি | `all` | `ENG` | general | `english_1`, `english_all` |
+| `gk` | সাধারণ জ্ঞান | `all` | `GK` | general | `general_knowledge`, `gk_all` |
+| `psychology` | মনোবিজ্ঞান | `all` | `PSY` | general | `psychology_all` |
+| `statistics` | পরিসংখ্যান | `all` | `STAT` | science | `statistics_all` |
+| `agriculture` | কৃষিশিক্ষা | `all` | `AGRI` | science | `agriculture_all` |
+| `home_science`| গার্হস্থ্য বিজ্ঞান | `all` | `HOME` | general | `home_science_all` |
+
+---
+
+### ৪.২ অধ্যায় আইডি স্ট্যান্ডার্ড (`chapter_id`)
+
+অধ্যায়ের আইডির জন্য নিচের স্ট্যান্ডার্ড ফরম্যাট ব্যবহৃত হয়:
+- **স্ট্যান্ডার্ড ফরম্যাট (Default / UI Standard):** `{sub_code}{paper_num}_ch{chapter_num}`
+  - *উদাহরণ:* `phy1_ch1` (পদার্থবিজ্ঞান ১ম পত্র অধ্যায় ১), `phy1_ch2` (ভেক্টর), `chem2_ch2` (জৈব রসায়ন), `math1_ch3` (সরলরেখা), `bio2_ch1` (প্রাণীর শ্রেণিবিন্যাস)।
+- **ক্যানোনিক্যাল ডাটাবেজ ফরম্যাট (Search Engine Standard):** `{sub_code}_p{paper_num}_c{chapter_num}`
+  - *উদাহরণ:* `phy_p1_c2`, `chem_p2_c2`, `math_p1_c3`, `bio_p2_c1`।
+- *নোট:* ফিল্টারিং ইঞ্জিন স্বয়ংক্রিয়ভাবে `phy1_ch2` ও `phy_p1_c2` উভয় রূপকেই নির্ভুলভাবে ইন্টারনালি সমাধান (Resolve) করে নেয়।
+
+---
+
+### ৪.৩ টপিক ও সাবটপিক আইডি স্ট্যান্ডার্ড (`topic_id`)
+
+টপিক লেভেল ফিল্টারিং নিখুঁত রাখতে ৩টি স্ট্যান্ডার্ড ফরম্যাট সমর্থিত:
+1. **কম্প্যাক্ট সাবটপিক ফরম্যাট (Default Topics Standard):** `p{paper}c{chapter}_s{subtopic}`
+   - *উদাহরণ:* `p1c2_s1` (ভৌতবিজ্ঞান ১ম পত্র, ২য় অধ্যায়, সাবটপিক ১ - ভেক্টর যোজন ও লব্ধি)
+   - *উদাহরণ:* `c1c2_s4` (রসায়ন ১ম পত্র, ২য় অধ্যায়, সাবটপিক ৪ - কোয়ান্টাম সংখ্যা)
+   - *উদাহরণ:* `m1c3_s1` (গণিত ১ম পত্র, ৩য় অধ্যায়, সাবটপিক ১ - সরলরেখার ঢাল ও সমীকরণ)
+2. **হায়ারার্কিক্যাল ক্যানোনিক্যাল ফরম্যাট (Detailed Path Standard):** `{sub}_p{paper}_c{chapter}_t{topic}`
+   - *উদাহরণ:* `phy_p1_c2_t1`, `chem_p1_c2_t4`, `math_p1_c3_t1`, `bio_p2_c1_t1`
+3. **কনসেপচুয়াল কোড ফরম্যাট (Legacy / Semantic Code):** `{topic_prefix}_{number}`
+   - *উদাহরণ:* `dim_01` (মাত্রা সমীকরণ), `vec_01` (ভেক্টর ডট গুণন), `ent_01` (এন্ট্রপি)
+
+---
+
+### ৪.৪ ক্যাটাগরি স্ট্যান্ডার্ড (`category`)
+
+প্রশ্ন কোন ভর্তি পরীক্ষার জন্য প্রযোজ্য তা চিহ্নিত করতে `category` ফিল্ডে নিচের ৫টি ভ্যালুর যেকোনো একটি ব্যবহৃত হয়:
+
+| Category Value | পরীক্ষার পরিধি ও ব্যাখ্যা | অন্তর্ভুক্ত মূল প্রতিষ্ঠানসমূহ |
+| :--- | :--- | :--- |
+| `'engineering'` | প্রকৌশল বিশ্ববিদ্যালয় ভর্তি পরীক্ষা | BUET, CKRUET (CUET, RUET, KUET), SUST, BUTEX, IUT, MIST |
+| `'varsity_a'` | সাধারণ ও প্রযুক্তি বিজ্ঞান অনুষদ ('ক' ইউনিট) | ঢাবি (DU A), জাবি (JU A/D), রাবি (RU C), চবি (CU A), জিএসটি গুচ্ছ (GST A), বিইউপি (BUP FST), কৃষি গুচ্ছ (Agri) |
+| `'medical'` | মেডিকেল ও ডেন্টাল ভর্তি পরীক্ষা | সরকারি ও বেসরকারি মেডিকেল (MBBS), ডেন্টাল (BDS), আর্মড ফোর্সেস মেডিকেল (AFMC/AMC), MAT, DAT |
+| `'academic'` | এইচএসসি বোর্ড ও কলেজ পরীক্ষা | সকল শিক্ষা বোর্ড (Dhaka, Rajshahi, Cumilla, Chattogram, ইত্যাদি), ক্যাডেট কলেজ ও শীর্ষ কলেজসমূহ |
+| `'main_book'` | মূল পাঠ্যবই ও অনুশীলনীর প্রশ্ন | NCTB অনুমোদিত মূলবইয়ের অনুশীলনী, ধারণাগত ও থিওরি প্রশ্ন |
+
+---
+
+### ৪.৫ প্রতিষ্ঠান / বিশ্ববিদ্যালয় ট্যাগ স্ট্যান্ডার্ড (`tags` - Institution Conventions)
+
+প্রশ্নপত্রে সংশ্লিষ্ট প্রতিষ্ঠান সহজে ফিল্টার করতে `tags` অ্যারেতে নিচের স্ট্যান্ডার্ড নামসমূহ ব্যবহার করুন:
+
+| প্রতিষ্ঠানের নাম | স্ট্যান্ডার্ড ট্যাগ (Tags Convention) | উদাহরণ |
+| :--- | :--- | :--- |
+| **বাংলাদেশ প্রকৌশল বিশ্ববিদ্যালয় (বুয়েট)** | `BUET`, `BUET (Preli)`, `BUET (Written)` | `"BUET 23-24"`, `"BUET 22-23 (Written)"` |
+| **ঢাকা বিশ্ববিদ্যালয় ('ক' ইউনিট)** | `DU`, `DU A`, `DU Ka`, `DU (Written)` | `"DU 23-24"`, `"DU A 24-25"`, `"DU Ka 22-23"` |
+| **চুয়েট, রুয়েট, কুয়েট (ইঞ্জিনিয়ারিং গুচ্ছ)** | `CKRUET`, `CUET`, `RUET`, `KUET` | `"CKRUET 23-24"`, `"RUET 21-22"`, `"CUET 22-23"` |
+| **শাহজালাল বিজ্ঞান ও প্রযুক্তি বিশ্ববিদ্যালয়** | `SUST`, `SUST A` | `"SUST 22-23"`, `"SUST A 20-21"` |
+| **জিএসটি সমন্বিত সাধারণ বিশ্ববিদ্যালয় গুচ্ছ** | `GST`, `GST A`, `GST KA` | `"GST 23-24"`, `"GST A 22-23"` |
+| **মেডিকেল কলেজ ভর্তি পরীক্ষা** | `Medical`, `MBBS`, `MAT` | `"Medical 23-24"`, `"MBBS 22-23"`, `"Medical 20-21"` |
+| **ডেন্টাল কলেজ ভর্তি পরীক্ষা** | `Dental`, `BDS`, `DAT` | `"Dental 23-24"`, `"BDS 22-23"` |
+| **বাংলাদেশ ইউনিভার্সিটি অব প্রফেশনালস** | `BUP`, `BUP FST` | `"BUP FST 24-25"`, `"BUP 23-24"` |
+| **কৃষি বিশ্ববিদ্যালয় গুচ্ছ** | `Agri`, `Agri Cluster` | `"Agri 23-24"`, `"Agri Cluster 22-23"` |
+| **জাহাঙ্গীরনগর বিশ্ববিদ্যালয় ('এ' ও 'ডি')** | `JU`, `JU A`, `JU D` | `"JU A 23-24"`, `"JU D 22-23"` |
+| **রাজশাহী বিশ্ববিদ্যালয় ('সি' ইউনিট)** | `RU`, `RU C` | `"RU C 23-24"`, `"RU 22-23"` |
+| **চট্টগ্রাম বিশ্ববিদ্যালয় ('এ' ইউনিট)** | `CU`, `CU A` | `"CU A 23-24"`, `"CU 22-23"` |
+| **বাংলাদেশ টেক্সটাইল বিশ্ববিদ্যালয়** | `BUTEX` | `"BUTEX 23-24"`, `"BUTEX 22-23"` |
+| **ইসলামিক ইউনিভার্সিটি অব টেকনোলজি** | `IUT` | `"IUT 23-24"`, `"IUT 22-23"` |
+| **মিলিটারি ইনস্টিটিউট অব সায়েন্স অ্যান্ড টেকনোলজি**| `MIST` | `"MIST 23-24"`, `"MIST 22-23"` |
+
+---
+
+### ৪.৬ সাল ও শিক্ষাবর্ষ ট্যাগ স্ট্যান্ডার্ড (`tags` - Year Conventions)
+
+- **ভর্তি পরীক্ষার সেশন ফরম্যাট:** `YY-YY` (সর্বদা হাইফেন দিয়ে দুই ডিজিটের সেশন)।
+  - *সঠিক উদাহরণ:* `24-25`, `23-24`, `22-23`, `21-22`, `20-21`, `19-20`
+  - *ট্যাগের সমন্বিত রূপ:* `"BUET 23-24"`, `"DU A 24-25"`, `"Medical 22-23"`, `"GST A 23-24"`
+- **বোর্ড পরীক্ষার সাল ফরম্যাট:** `YYYY` বা `YY` (চার ডিজিটের পূর্ণ সাল বা দুই ডিজিট)।
+  - *সঠিক উদাহরণ:* `2024`, `2023`, `2022`, `2021`
+  - *ট্যাগের সমন্বিত রূপ:* `"DB 2023"`, `"HSC 2024"`, `"All Board 2023"`
+
+---
+
+### ৪.৭ এইচএসসি বোর্ড ট্যাগ স্ট্যান্ডার্ড (`tags` - Board Conventions)
+
+একাডেমিক ক্যাটাগরির প্রশ্নের জন্য বোর্ডগুলোর সংক্ষিপ্ত ও পূর্ণ নাম:
+
+| শিক্ষা বোর্ড | স্ট্যান্ডার্ড বোর্ড কোড | পূর্ণ নাম ট্যাগ | উদাহরণ ট্যাগ |
+| :--- | :--- | :--- | :--- |
+| **ঢাকা বোর্ড** | `DB` | `Dhaka Board` | `"DB 2023"`, `"Dhaka Board 2022"` |
+| **রাজশাহী বোর্ড** | `RB` | `Rajshahi Board` | `"RB 2023"`, `"Rajshahi Board 2021"` |
+| **কুমিল্লা বোর্ড** | `CB` | `Cumilla Board` | `"CB 2023"`, `"Cumilla Board 2022"` |
+| **যশোর বোর্ড** | `JB` | `Jashore Board` | `"JB 2023"`, `"Jashore Board 2020"` |
+| **চট্টগ্রাম বোর্ড** | `CtgB` | `Chattogram Board` | `"CtgB 2023"`, `"Chattogram Board 2022"` |
+| **বরিশাল বোর্ড** | `BB` | `Barishal Board` | `"BB 2023"`, `"Barishal Board 2021"` |
+| **সিলেট বোর্ড** | `SB` | `Sylhet Board` | `"SB 2023"`, `"Sylhet Board 2022"` |
+| **দিনাজপুর বোর্ড** | `DinB` | `Dinajpur Board` | `"DinB 2023"`, `"Dinajpur Board 2023"` |
+| **ময়মনসিংহ বোর্ড** | `MB` | `Mymensingh Board` | `"MB 2023"`, `"Mymensingh Board 2022"` |
+| **সকল বোর্ড (কম্বাইন্ড)** | `All Board` | `HSC Board` | `"All Board 2018"`, `"HSC Board 2023"` |
+
+---
+
+### ৪.৮ বিষয় ও অধ্যায়ের পূর্ণাঙ্গ মাস্টার ম্যাপিং চার্ট (Master Chapter Mapping Table)
+
+| Subject ID | Subject Name | Paper | Chapter ID | Canonical DB ID | Chapter Bangla Name |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `physics_1` | পদার্থবিজ্ঞান ১ম পত্র | 1st | `phy1_ch1` | `phy_p1_c1` | ভৌতজগৎ ও পরিমাপ |
+| `physics_1` | পদার্থবিজ্ঞান ১ম পত্র | 1st | `phy1_ch2` | `phy_p1_c2` | ভেক্টর |
+| `physics_1` | পদার্থবিজ্ঞান ১ম পত্র | 1st | `phy1_ch3` | `phy_p1_c3` | গতিবিদ্যা |
+| `physics_1` | পদার্থবিজ্ঞান ১ম পত্র | 1st | `phy1_ch4` | `phy_p1_c4` | নিউটনিয়ান বলবিদ্যা |
+| `physics_1` | পদার্থবিজ্ঞান ১ম পত্র | 1st | `phy1_ch5` | `phy_p1_c5` | কাজ, শক্তি ও ক্ষমতা |
+| `physics_1` | পদার্থবিজ্ঞান ১ম পত্র | 1st | `phy1_ch6` | `phy_p1_c6` | মহাকর্ষ ও অভিকর্ষ |
+| `physics_1` | পদার্থবিজ্ঞান ১ম পত্র | 1st | `phy1_ch7` | `phy_p1_c7` | পদার্থের গাঠনিক ধর্ম |
+| `physics_1` | পদার্থবিজ্ঞান ১ম পত্র | 1st | `phy1_ch8` | `phy_p1_c8` | পর্যাবৃত্ত গতি |
+| `physics_1` | পদার্থবিজ্ঞান ১ম পত্র | 1st | `phy1_ch9` | `phy_p1_c9` | তরঙ্গ |
+| `physics_1` | পদার্থবিজ্ঞান ১ম পত্র | 1st | `phy1_ch10` | `phy_p1_c10` | আদর্শ গ্যাস ও গতিতত্ত্ব |
+| `physics_2` | পদার্থবিজ্ঞান ২য় পত্র | 2nd | `phy2_ch1` | `phy_p2_c1` | তাপগতিবিদ্যা |
+| `physics_2` | পদার্থবিজ্ঞান ২য় পত্র | 2nd | `phy2_ch2` | `phy_p2_c2` | স্থির তড়িৎ |
+| `physics_2` | পদার্থবিজ্ঞান ২য় পত্র | 2nd | `phy2_ch3` | `phy_p2_c3` | চল তড়িৎ |
+| `physics_2` | পদার্থবিজ্ঞান ২য় পত্র | 2nd | `phy2_ch4` | `phy_p2_c4` | তড়িৎ প্রবাহের চৌম্বক ক্রিয়া |
+| `physics_2` | পদার্থবিজ্ঞান ২য় পত্র | 2nd | `phy2_ch5` | `phy_p2_c5` | তাড়িতচৌম্বকীয় আবেশ |
+| `physics_2` | পদার্থবিজ্ঞান ২য় পত্র | 2nd | `phy2_ch6` | `phy_p2_c6` | জ্যামিতিক আলোকবিজ্ঞান |
+| `physics_2` | পদার্থবিজ্ঞান ২য় পত্র | 2nd | `phy2_ch7` | `phy_p2_c7` | ভৌত আলোকবিজ্ঞান |
+| `physics_2` | পদার্থবিজ্ঞান ২য় পত্র | 2nd | `phy2_ch8` | `phy_p2_c8` | আধুনিক পদার্থবিজ্ঞান |
+| `physics_2` | পদার্থবিজ্ঞান ২য় পত্র | 2nd | `phy2_ch9` | `phy_p2_c9` | পরমাণু ও নিউক্লিয়ার |
+| `physics_2` | পদার্থবিজ্ঞান ২য় পত্র | 2nd | `phy2_ch10` | `phy_p2_c10` | সেমিকন্ডাক্টর ও ইলেকট্রনিক্স |
+| `chemistry_1` | রসায়ন ১ম পত্র | 1st | `chem1_ch1` | `chem_p1_c1` | ল্যাবরেটরির নিরাপদ ব্যবহার |
+| `chemistry_1` | রসায়ন ১ম পত্র | 1st | `chem1_ch2` | `chem_p1_c2` | গুণগত রসায়ন |
+| `chemistry_1` | রসায়ন ১ম পত্র | 1st | `chem1_ch3` | `chem_p1_c3` | পর্যায়বৃত্ত ধর্ম ও বন্ধন |
+| `chemistry_1` | রসায়ন ১ম পত্র | 1st | `chem1_ch4` | `chem_p1_c4` | রাসায়নিক পরিবর্তন |
+| `chemistry_1` | রসায়ন ১ম পত্র | 1st | `chem1_ch5` | `chem_p1_c5` | কর্মমুখী রসায়ন |
+| `chemistry_2` | রসায়ন ২য় পত্র | 2nd | `chem2_ch1` | `chem_p2_c1` | পরিবেশ রসায়ন |
+| `chemistry_2` | রসায়ন ২য় পত্র | 2nd | `chem2_ch2` | `chem_p2_c2` | জৈব রসায়ন |
+| `chemistry_2` | রসায়ন ২য় পত্র | 2nd | `chem2_ch3` | `chem_p2_c3` | পরিমাণগত রসায়ন |
+| `chemistry_2` | রসায়ন ২য় পত্র | 2nd | `chem2_ch4` | `chem_p2_c4` | তড়িৎ রসায়ন |
+| `chemistry_2` | রসায়ন ২য় পত্র | 2nd | `chem2_ch5` | `chem_p2_c5` | অর্থনৈতিক রসায়ন |
+| `math_1` | উচ্চতর গণিত ১ম পত্র | 1st | `math1_ch1` | `math_p1_c1` | ম্যাট্রিক্স ও নির্ণায়ক |
+| `math_1` | উচ্চতর গণিত ১ম পত্র | 1st | `math1_ch3` | `math_p1_c3` | সরলরেখা |
+| `math_1` | উচ্চতর গণিত ১ম পত্র | 1st | `math1_ch4` | `math_p1_c4` | বৃত্ত |
+| `math_1` | উচ্চতর গণিত ১ম পত্র | 1st | `math1_ch7` | `math_p1_c7` | ত্রিকোণমিতিক অনুপাত |
+| `math_1` | উচ্চতর গণিত ১ম পত্র | 1st | `math1_ch9` | `math_p1_c9` | অন্তরীকরণ |
+| `math_1` | উচ্চতর গণিত ১ম পত্র | 1st | `math1_ch10` | `math_p1_c10` | যোগজীকরণ |
+| `math_2` | উচ্চতর গণিত ২য় পত্র | 2nd | `math2_ch3` | `math_p2_c3` | জটিল সংখ্যা |
+| `math_2` | উচ্চতর গণিত ২য় পত্র | 2nd | `math2_ch4` | `math_p2_c4` | বহুপদী সমীকরণ |
+| `math_2` | উচ্চতর গণিত ২য় পত্র | 2nd | `math2_ch6` | `math_p2_c6` | কণিক |
+| `math_2` | উচ্চতর গণিত ২য় পত্র | 2nd | `math2_ch7` | `math_p2_c7` | বিপরীত ত্রিকোণমিতি |
+| `math_2` | উচ্চতর গণিত ২য় পত্র | 2nd | `math2_ch8` | `math_p2_c8` | স্থিতিবিদ্যা |
+| `math_2` | উচ্চতর গণিত ২য় পত্র | 2nd | `math2_ch9` | `math_p2_c9` | সমতলে দ্বিপদী গতি |
+| `biology_1` | জীববিজ্ঞান ১ম পত্র | 1st | `bio1_ch1` | `bio_p1_c1` | কোষ ও এর গঠন |
+| `biology_1` | জীববিজ্ঞান ১ম পত্র | 1st | `bio1_ch2` | `bio_p1_c2` | কোষ বিভাজন |
+| `biology_1` | জীববিজ্ঞান ১ম পত্র | 1st | `bio1_ch4` | `bio_p1_c4` | অণুজীব |
+| `biology_1` | জীববিজ্ঞান ১ম পত্র | 1st | `bio1_ch8` | `bio_p1_c8` | টিস্যু ও টিস্যুতন্ত্র |
+| `biology_1` | জীববিজ্ঞান ১ম পত্র | 1st | `bio1_ch9` | `bio_p1_c9` | উদ্ভিদ শারীরতত্ত্ব |
+| `biology_2` | জীববিজ্ঞান ২য় পত্র | 2nd | `bio2_ch1` | `bio_p2_c1` | প্রাণীর শ্রেণিবিন্যাস |
+| `biology_2` | জীববিজ্ঞান ২য় পত্র | 2nd | `bio2_ch2` | `bio_p2_c2` | প্রাণীর পরিচিতি |
+| `biology_2` | জীববিজ্ঞান ২য় পত্র | 2nd | `bio2_ch3` | `bio_p2_c3` | পরিপাক ও শোষণ |
+| `biology_2` | জীববিজ্ঞান ২য় পত্র | 2nd | `bio2_ch4` | `bio_p2_c4` | রক্ত ও সংবহন |
+| `biology_2` | জীববিজ্ঞান ২য় পত্র | 2nd | `bio2_ch5` | `bio_p2_c5` | শ্বাসক্রিয়া ও শ্বসন |
+| `biology_2` | জীববিজ্ঞান ২য় পত্র | 2nd | `bio2_ch11` | `bio_p2_c11` | জিনতত্ত্ব ও বিবর্তন |
+
+---
+
+## ৫. ফাইল ফরম্যাট অনুযায়ী ইমপোর্ট গাইডলাইন (Import Guidelines by Format)
+
+### A. JSON (.json)
+- ফাইলটি একটি ভ্যালিড JSON Array হতে হবে: `[ { ... }, { ... } ]`
+- অবজেক্ট কিতে কোনো ট্রেইলিং কমা (Trailing comma) থাকা যাবে না।
+- ব্যাকস্ল্যাশ এস্কেপ করতে `\\` ব্যবহার করতে হবে (যেমন: `"\\frac{a}{b}"`)।
+
+### B. CSV (.csv)
+- প্রথম লাইনে অবশ্যই হেডার Row (Column Names) থাকতে হবে।
+- কমা (`,`) ডেলিমিটার হিসেবে ব্যবহৃত হবে। টেক্সটের ভেতর কমা থাকলে কলামটি ডাবল কোটেশেন `"... "` দিয়ে মুড়ে দিতে হবে।
+- `options` এর জন্য পৃথক ৪টি কলাম ব্যবহার করা যাবে: `option_a`, `option_b`, `option_c`, `option_d` (অথবা `options` কলামে JSON অবজেক্ট স্ট্রিং)।
+- `tags`, `key_points`, `explanation_image_urls` এর জন্য কমা-সেপারেটেড টেক্সট অথবা JSON অ্যারে দেওয়া যাবে।
+
+### C. Excel (.xlsx)
+- প্রথম শীটে হেডার র-তে সঠিক কলামের নাম লিখুন।
+- টেক্সট কোটেশন বা ব্যাকস্ল্যাশ এস্কেপিংয়ের কোনো বাড়তি ঝামেলা নেই; সাধারণ `\frac{a}{b}` লিখলেই ব্যাকএন্ড অটো-পার্স করবে।
+
+---
+
+## ৬. মাস্টার এআই এক্সট্রাকশন প্রম্পট (Master AI Prompt for PDF/Image Extraction)
+
+পিডিএফ/ছবি বা স্ক্যান থেকে যেকোনো এনটিটির ডেটা JSON ফরম্যাটে কনভার্ট করতে নিচের প্রম্পটটি ব্যবহার করুন:
+
+```text
+============================== START OF SYSTEM PROMPT ==============================
+You are an Expert Content Extraction Engine for PrepTest (Bangladeshi University Admission Portal).
+Your task is to convert scanned PDF pages, OCR text, or images into a strictly formatted 100% valid JSON array adhering to the PrepTest Data Schema.
+
+TARGET ENTITY TYPES:
+1. MCQ Questions ("type": "mcq")
+2. Written Questions (Descriptive engineering/varsity written problems)
+3. Topics (Subtopic syllabus mapping)
+4. Knowledge Snippets (Formula/Concept cards)
+
+CRITICAL EXTRACTION RULES:
+1. Return ONLY a pure valid JSON array: [ { ... }, { ... } ]. Do not add markdown introductory text.
+2. UTF-8 Bangla text must be natural and accurate.
+3. Mathematics & Science: Format all math variables, units, equations, and expressions in LaTeX using $...$ for inline and $$...$$ for display math.
+4. Backslash Escaping: In JSON strings, ALWAYS double-escape backslashes (e.g. "\\frac{a}{b}", "\\vec{A}").
+5. TikZ Diagrams: If a vector diagram or circuit exists, convert it into a valid TikZ block wrapped inside \\begin{tikzpicture}...\\end{tikzpicture}.
+6. Mandatory Field Mapping:
+   - MCQ: subject_id, subject_name, paper, chapter_id, chapter_name, question_text, options (A,B,C,D), correct_ans (A/B/C/D), explanation, tags, star_rating (1-3), type ("mcq").
+   - Written: subject_id, subject_name, paper, chapter_id, chapter_name, question_number, question_text, explanation, tags, star_rating (1-3).
+   - KnowledgeSnippet: type ("concept"|"formula"|"shortcut"|"gk"), title_bn, content_bn, content_latex, subject_id, theme.
+=============================== END OF SYSTEM PROMPT ===============================
+```
+
+---
+
+## ৭. প্রডাকশন গোল্ডেন এক্সাম্পলসমূহ (Golden Production Examples)
+
+### ১. MCQ Question JSON Example
+```json
+[
+  {
+    "id": "q_phy1_ch2_001",
+    "subject_id": "physics_1",
+    "subject_name": "পদার্থবিজ্ঞান ১ম পত্র",
+    "paper": "1st",
+    "chapter_id": "phy1_ch2",
+    "chapter_name": "ভেক্টর",
+    "topic_id": "p1c2_s1",
+    "topic_name": "ভেক্টর ডট গুণন",
+    "category": "engineering",
+    "question_text": "যদি $\\vec{A} = 2\\hat{i} + 3\\hat{j} - \\hat{k}$ এবং $\\vec{B} = -\\hat{i} + \\hat{j} + 2\\hat{k}$ হয়, তবে $\\vec{A} \\cdot \\vec{B}$ এর মান কত?",
+    "options": {
+      "A": "$-1$",
+      "B": "$0$",
+      "C": "$1$",
+      "D": "$5$"
+    },
+    "correct_ans": "A",
+    "explanation": "ডট গুণনের সূত্রানুসারে:\n$$\\vec{A} \\cdot \\vec{B} = A_x B_x + A_y B_y + A_z B_z$$\n$$\\vec{A} \\cdot \\vec{B} = (2 \\times -1) + (3 \\times 1) + (-1 \\times 2) = -2 + 3 - 2 = -1$$\nঅতএব সঠিক উত্তর (A)।",
+    "explanation_latex": "\\vec{A} \\cdot \\vec{B} = -1",
+    "tags": ["DU 23-24", "BUET 21-22", "Engineering"],
+    "star_rating": 3,
+    "type": "mcq",
+    "difficulty": "easy"
+  }
+]
+```
+
+### ২. Written Question JSON Example
+```json
+[
+  {
+    "id": "wq_phy2_ch1_001",
+    "subject_id": "physics_2",
+    "subject_name": "পদার্থবিজ্ঞান ২য় পত্র",
+    "paper": "2nd",
+    "chapter_id": "phy2_ch1",
+    "chapter_name": "তাপগতিবিদ্যা",
+    "topic_id": "p2c1_s2",
+    "topic_name": "এনট্রপি",
+    "question_number": 1,
+    "question_text": "$10^\\circ\\text{C}$ তাপমাত্রার $5\\text{ kg}$ পানিকে $100^\\circ\\text{C}$ তাপমাত্রায় উন্নীত করতে এনট্রপির পরিবর্তন নির্ণয় কর। [পানির আপেক্ষিক তাপ $4.2 \\times 10^3\\text{ J/(kg}\\cdot\\text{K)}$]",
+    "explanation": "তাপমাত্রা পরিবর্তনের ক্ষেত্রে এনট্রপির পরিবর্তন ($\\Delta S$) নির্ণয়ের সূত্র হলো:\n$$\\Delta S = m s \\ln\\left(\\frac{T_2}{T_1}\\right)$$\nএখানে, $m = 5\\text{ kg}$, $T_1 = 283\\text{ K}$, $T_2 = 373\\text{ K}$, $s = 4200\\text{ J/(kg}\\cdot\\text{K)}$।\n$$\\Delta S = 5 \\times 4200 \\times \\ln\\left(\\frac{373}{283}\\right) = 21000 \\times 0.276 = 5796\\text{ J/K}$$\nএনট্রপির পরিবর্তন $\\Delta S = 5796\\text{ J/K}$ (প্রায়)।",
+    "explanation_latex": "\\Delta S = 5796\\,\\text{J/K}",
+    "tags": ["KhU B Unit 24-25 (Written)", "DU A 24-25"],
+    "category": "varsity_a",
+    "difficulty": "medium",
+    "star_rating": 3
+  }
+]
+```
+
+### ৩. Topic Record JSON Example
+```json
+[
+  {
+    "id": "p1c2_s1",
+    "chapter_id": "phy1_ch2",
+    "subject_id": "physics_1",
+    "paper": "1st",
+    "topic_code": "T-01",
+    "name": "Vector Addition & Components",
+    "bangla_name": "ভেক্টর যোগ ও সামান্তরিক সূত্র",
+    "star_rating": 3,
+    "mcq_count": 45,
+    "written_count": 12,
+    "exam_occurrences": {
+      "mcq": "BUET 22-23, DU 23-24",
+      "written": "DU A 24-25"
+    },
+    "key_points": [
+      "সামান্তরিকের লব্ধি $R = \\sqrt{P^2 + Q^2 + 2PQ\\cos\\alpha}$",
+      "সর্বোচ্চ লব্ধি $R_{\\max} = P + Q$ (যখন $\\alpha = 0^\\circ$)",
+      "সর্বনিম্ন লব্ধি $R_{\\min} = P - Q$ (যখন $\\alpha = 180^\\circ$)"
+    ]
+  }
+]
+```
+
+### ৪. Knowledge Snippet JSON Example
+```json
+[
+  {
+    "id": "ks_phy1_001",
+    "type": "shortcut",
+    "title_bn": "সামান্তরিকের লব্ধির দিক শর্টকাট",
+    "content_bn": "দুটি সমমানের ভেক্টর $P$ এর মধ্যবর্তী কোণ $\\alpha$ হলে তাদের লব্ধি ভেক্টর যেকোনো একটি ভেক্টরের সাথে ঠিক অর্ধেক কোণ উৎপন্ন করে।",
+    "content_latex": "\\tan\\theta = \\tan\\left(\\frac{\\alpha}{2}\\right) \\implies \\theta = \\frac{\\alpha}{2}",
+    "answer_bn": "অর্থাৎ, সমান বলদ্বয়ের মধ্যবর্তী কোণ $120^\\circ$ হলে লব্ধির দিক হবে $60^\\circ$ এবং লব্ধির মানও হবে $P$।",
+    "subject_id": "physics_1",
+    "theme": "emerald_green",
+    "textSize": "normal",
+    "customDuration": 7,
+    "active": true
+  }
+]
+```
+
+### ৫. MCQ Question CSV Layout Example
+```csv
+subject_id,subject_name,paper,chapter_id,chapter_name,question_text,option_a,option_b,option_c,option_d,correct_ans,explanation,tags,star_rating,type
+physics_1,পদার্থবিজ্ঞান ১ম পত্র,1st,phy1_ch2,ভেক্টর,"ভেক্টর $\vec{A}$ ও $\vec{B}$ লম্ব হওয়ার শর্ত কী?",$\vec{A} \cdot \vec{B} = 0$,$\vec{A} \times \vec{B} = 0$,$\vec{A} + \vec{B} = 0$,$\vec{A} - \vec{B} = 0$,A,"দুইটি ভেক্টরের ডট গুণন শূন্য হলে তারা পরস্পর লম্ব হয়।","DU 23-24, Engineering",3,mcq
+```
+
+---
+
+## ৮. অ্যাডমিন পোর্টেলে ইমপোর্ট ও ভ্যালিডেশন পদ্ধতি (Admin Import Workflow)
+
+১. এডমিন প্যানেলের **"Question Bank"**, **"Written Questions"**, **"Topics"**, অথবা **"Knowledge Snippets"** ম্যানেজমেন্ট সেকশনে যান।
+২. **"Import Data"** বা **"Batch Bulk Import"** বাটনে ক্লিক করুন।
+৩. ফাইল টাইপ সিলেক্ট করুন (`JSON`, `CSV`, অথবা `XLSX`) এবং ফাইল ড্র্যাগ-অ্যান্ড-ড্রপ করুন।
+৪. সিস্টেম সায়েন্টিফিক স্কিমা (Zod Validation Engine) দিয়ে ডেটা যাচাই করে ডাটাবেজে স্টোর করবে এবং কোনো কলাম/কিতে ভুল থাকলে লাইন নম্বরসহ স্পষ্ট ত্রুটি প্রদর্শন করবে।
+
+---
+
+## ৯. স্ট্রিক্ট ডেটাবেজ-ফার্স্ট মোড (Strict Database-First Mode & Empty State)
+
+- অ্যাপে আগে থাকা হার্ডকোডেড ফলব্যাক প্রশ্ন সিডিং সম্পূর্ণ বন্ধ করা হয়েছে।
+- ডেটাবেজে কোনো প্রশ্ন না থাকলে বা ডেটাবেজ খালি থাকলে অ্যাপে কোনো ডামি/ফলব্যাক প্রশ্ন দেখানো হবে না।
+- ইউজার ইন্টারফেসে পরিষ্কার খালি অবস্থা (Empty State) প্রদর্শিত হবে যাতে এডমিনরা সরাসরি ডেটা আপলোড করে বাস্তব ডেটা দিয়ে সিস্টেম পরিচালনা করতে পারেন।
+
+---
+
+## ১০. সেন্ট্রালাইজড ফিল্টারিং ইঞ্জিন ও আইডি স্ট্যান্ডার্ডাইজেশন (Standardized Filtering & ID Rules)
+
+- **সেন্ট্রালাইজড ইউটিলিটি:** `src/utils/questionFilter.ts` ফাইল থেকে `filterQuestions()` ফাংশন পুরো অ্যাপে (QuestionBankScreen, Explore, Exam Practice) সুসংহতভাবে ফিল্টারিং নিশ্চিত করে।
+- **প্রি-কোয়েরি ভ্যালিডেশন লেয়ার (`validateAndStandardizeQueryParams`):** `src/services/api.ts`-এ ডেটাবেজ রিকোয়েস্ট পাঠানোর ঠিক পূর্বেই UI থেকে প্রাপ্ত ইনপুটগুলোকে স্ট্যান্ডার্ডাইজড ফরম্যাটে কনভার্ট করা হয়:
+  - **Subject ID:** `physics_1`, `physics_2`, `chemistry_1`, `math_1`, `biology_1` অথবা স্ট্যান্ডার্ড আলিয়াস (`physics`, `phy_p1` ইত্যাদি) স্বয়ংক্রিয়ভাবে স্ট্যান্ডার্ড ক্যানোনিক্যাল আইডিতে রূপান্তর হয়।
+  - **Chapter ID:** UI থেকে আসা `phy1_ch2`, `c2` বা চ্যাপ্টার সংখ্যা স্বয়ংক্রিয়ভাবে `phy_p1_c2` বা `chem_p2_c3` স্ট্যান্ডার্ড ফরম্যাটে ম্যাপ হয়।
+  - **Topic ID:** UI থেকে আসা `p1c2_s1`, `T-01`, `t1` ইত্যাদি সরাসরি স্ট্যান্ডার্ড ইউনিক আইডি (যেমন `phy_p1_c2_t1`) তে রূপান্তর হয়ে পোস্টগ্রেস ব্যাকএন্ডে কুয়েরি পাঠায়।
+- **ক্যাটাগরি ও ট্যাগ ইনক্লুশন:** `matchCategory()` ফাংশন একই সাথে প্রাইমারি ক্যাটাগরি এবং মাল্টি-ক্যাটাগরি ট্যাগস (`varsity_a`, `engineering`, `medical`, `academic`, `main_book`) যাচাই করে সঠিক প্রশ্ন নিয়ে আসে।
+- **ব্যাকএন্ড ও ফ্রন্টএন্ড সমরূপতা:** ফ্রন্টএন্ড ইন-মেমোরি ফিল্টারিং এবং ব্যাকএন্ড PostgreSQL/ইন-মেমোরি কোয়েরি ফিল্টারিং একই রুলসেট ও আলিয়াসিং মেনে কাজ করে।
+
+---
+
+## ১১. অটোমেটেড মাইগ্রেশন ও স্কিমা ইনিশিয়ালাইজেশন (Automated Database Migrations)
+
+- **সম্পূর্ণ স্বয়ংক্রিয় (Zero-Manual Setup):** ডেটাবেজে কোনো SQL স্ক্রিপ্ট বা কমান্ড ম্যানুয়ালি রান করতে হবে না।
+- **মাইগ্রেশন ইঞ্জিন (`server/migrations.ts`):** ব্যাকএন্ড সার্ভার চালু হওয়ার সাথে সাথে `runMigrations()` ফাংশন স্বয়ংক্রিয়ভাবে `_migrations` টেবিল যাচাই করে নতুন সকল টেবিল (`subjects`, `chapters`, `topics`, `questions`, `written_questions`, `users`, `user_progress`) ও পারফরম্যান্স ইনডেক্স তৈরি করে নেয়।
+- **আইডেমপোটেন্ট কলাম ভ্যালিডেশন:** প্রি-এক্সিস্টিং কোনো টেবিল থাকলে (যেমন `subjects`, `chapters`, `written_questions`) স্বয়ংক্রিয়ভাবে `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` মেকানিজমে প্রয়োজনীয় কলামগুলো যুক্ত করে নির্বিঘ্নে ডেটা সিড ও ইন্ডেক্সিং সম্পন্ন করে।
+- **ইনডেক্সিং অপ্টিমাইজেশন:** মাল্টি-লেভেল ফিল্টারিংয়ের জন্য কম্পাউন্ড ইনডেক্স (`idx_questions_topic_cat`, `idx_written_topic_cat`, `idx_questions_hierarchy` ইত্যাদি) ব্যাকএন্ডে স্বয়ংক্রিয়ভাবে যুক্ত হয়ে যায়।
+
+---
+
+## ১২. ডাইনামিক লাইভ কোয়েশ্চেন কাউন্টিং সিস্টেম (Dynamic Question Counting System)
+
+- **সম্পূর্ণ ডেটাবেজ-ড্রিভেন (No Hardcoded Fallback):** ইউজার ইন্টারফেসে (UI) কোনো স্তর যেমন বিষয় (Subject), ক্যাটাগরি (Category), অধ্যায় (Chapter), কিংবা টপিক (Topic) চিপসে কোনো পূর্ব-নির্ধারিত হার্ডকোডেড বা ফিক্সড ভ্যালু (যেমন `|| 50`, `|| 20` বা `150`) থাকে না। ইউজারের প্রতিটি পেজ রিলোড বা নেভিগেশনে PostgreSQL ডেটাবেজ থেকে লাইভ কাউন্ট আপডেট হয়।
+- **সেন্ট্রাল এগ্রিগেশন এন্ডপয়েন্ট (`/api/questions/counts`):**
+  - সার্ভার ব্যাকএন্ডে `getQuestionCounts()` ফাংশন এককালীন অপ্টিমাইজড কুয়েরির মাধ্যমে সকল MCQ এবং Written প্রশ্নের পরিসংখ্যান সংগ্রহ করে।
+  - রেসপন্সে `bySubject`, `byCategory`, `byChapter`, `byTopic` এবং কম্বাইন্ড ম্যাট্রিক্স (`bySubjectAndCategory`, `byChapterAndCategory`, `byTopicAndCategory`) প্রদান করা হয়।
+  - প্রতিটি ক্যাটাগরি ও চ্যাপ্টারে `mcq`, `written` এবং `total` পৃথকভাবে হিসাব থাকে।
+- **ক্লায়েন্ট হুক (`useQuestionCounts`):**
+  - TanStack React Query এর মাধ্যমে ক্লায়েন্টে ক্যাশ ও রিয়েলটাইম রিফেচ সুবিধাসহ ডেটা হ্যান্ডল করা হয়।
+  - UI এর লেভেল ১ (সাবজেক্ট কার্ড), লেভেল ২ (ক্যাটাগরি কার্ড), লেভেল ৩ (চ্যাপ্টার চিপস) এবং লেভেল ৪ (টপিক চিপস ও হেডার ব্যাজ) লাইভ কাউন্টিং মেনে স্বয়ংক্রিয়ভাবে আপডেট হয়।
+
+---
+
+## ১৩. ট্যাক্সোনমি রেজোলিউশন ও হার্ডেনিং ইঞ্জিন (Smart Taxonomy Resolution Engine)
+
+- **মডিউল পাথ:** `packages/shared/src/taxonomy/resolve.ts`
+- **ইউনিকোড নরমালাইজেশন (`normalizeBangla`):** বাংলা টেক্সটের ক্ষেত্রে ইনভিজিবল জিরো-উইথ ক্যারেক্টার (ZWJ, ZWNJ, BOM), অপ্রয়োজনীয় ডাবল স্পেস এবং NFC বনাম NFD গ্লিফ ডিকম্পজিশন (`ভেক্টর`, `গতিবিদ্যা`, `রসায়ন`) স্বয়ংক্রিয়ভাবে সংশোধন করে স্ট্রিক্ট ম্যাচিং সম্পাদন করে।
+- **ট্যাক্সোনমি রেজোলিউশন ফাংশনসমূহ:**
+  - `resolveSubject({ id?, name?, bangla_name?, paper? })`: বিষয় ও পত্রভিত্তিক আইডি ভ্যালিডেশন এবং মিসম্যাচ ডিটেকশন।
+  - `resolveChapter({ id?, subject_id, name?, bangla_name? })`: নির্দিষ্ট বিষয়ের অধীনে অধ্যায় রেজোলিউশন।
+  - `resolveTopic({ id?, chapter_id, name?, bangla_name? })`: নির্দিষ্ট অধ্যায়ের অধীনে টপিক ও সাবটপিক রেজোলিউশন।
+- **নো-সাইলেন্ট-ফেল মেকানিজম (No Silent Nulls):** সরাসরি কোনো ম্যাচ না পাওয়া গেলে সাইলেন্টলি `null` রিটার্ন না করে টপ-৫ ক্যান্ডিডেট (`candidates`) এবং কনফিডেন্স লেভেল (`exact_id`, `exact_name`, `fuzzy_candidate`, `none`) রিটার্ন করে অ্যাডমিনকে রিভিউ করতে সহায়তা করে।
+- **ক্যাসকেডিং ট্রির সহায়ক (`buildTaxonomyTree`):** এডমিন ইমপোর্টার ও পিকারের জন্য Subject -> Chapter -> Topic এর ক্যাসকেডিং ট্রির স্ট্রাকচার বিল্ড করে।
+- **টেস্টিং কভারেজ:** `tests/taxonomy_resolve.test.ts` এর মাধ্যমে যুক্তাক্ষর, ডিকম্পোজড বর্ণ ও স্পেসের বাস্তব বাংলা এজ-কেসগুলো টেস্ট দ্বারা ১০০% ভেরিফাইড।
+- **ডেটাবেজ মাইগ্রেশন হার্ডেনিং (`008_taxonomy_hardening`):** 
+  - চ্যাপ্টার ডেডুপ্লিকেশনে একক CTE প্যাটার্ন ব্যবহার করে সারভাইভার আইডি নির্বাচন করা হয়েছে (`ORDER BY created_at ASC, COALESCE(total_topics, 0) DESC, id ASC`)।
+  - চ্যাপ্টার মার্জ করার সময় একই সাথে `topics`, `questions` এবং `written_questions` টেবিলের ফরেন রেফারেন্স নিরাপদভাবে সারভাইভার আইডিতে রি-পয়েন্ট করে ডুপ্লিকেট চ্যাপ্টার ক্লিন করা হয়।
+  - `subjects` টেবিলে `UNIQUE(bangla_name, paper)` যুক্ত করার পূর্বে সাবজেক্ট ডেডুপ্লিকেট ও রেফারেন্স শিফট স্বয়ংক্রিয়ভাবে নিশ্চিত করা হয়।
+
+---
+
+## ১৪. স্মার্ট বাল্ক ইমপোর্টার ৩.০ ও ট্রানজ্যাকশনাল পাইপলাইন (Smart Bulk Importer 3.0 Pipeline)
+
+- **সার্ভিস লেয়ার:** `server/services/importService.ts`
+- **৩-ধাপের নিরাপদ ইমপোর্ট আর্কিটেকচার (Safe 3-Stage Lifecycle):**
+  1. **১. পার্স পর্যায় (Parse Phase):** বিদ্যমান CSV, Excel (.xlsx), বা JSON ফাইল পার্স করে ডেটা ভ্যালিডেট করা হয় (বিদ্যমান কলাম ম্যাপিং সম্পূর্ণ অক্ষুণ্ণ রেখে)।
+  2. **২. রেজোলিউশন ও মাল্টি-টিয়ার প্রিভিউ (Resolve & Preview Phase - Non-Destructive):**
+     - প্রতিটি রো-এর জন্য `resolveSubject`, `resolveChapter`, ও `resolveTopic` কল করা হয়।
+     - রো গুলোকে ৩টি তালিকায় স্বয়ংক্রিয়ভাবে শ্রেণীবদ্ধ করা হয়:
+       - **Fully Resolved Rows (`fullyResolvedRows`):** বিষয়, অধ্যায় এবং টপিক ১০০% নিশ্চিতভাবে ম্যাচ হয়েছে।
+       - **Ambiguous Rows (`ambiguousRows`):** টপিক আইডি পাওয়া গেছে কিন্তু ডাটাবেজের নামের সাথে অমিল থাকলে বা একাধিক সম্ভাব্য মিল থাকলে স্পষ্ট বাংলা কারণ ও ক্যান্ডিডেট লিস্ট প্রদান করে।
+       - **Missing Taxonomy Rows (`missingTaxonomyRows`):** নতুন অধ্যায় বা টপিক যা ডাটাবেজে নেই, স্বয়ংক্রিয় আইডি তৈরির পরামর্শসহ অ্যাডমিনকে ম্যানুয়াল বা স্বয়ংক্রিয় তৈরির অপশন দেয়।
+     - এই পর্যায়ে ডাটাবেজে **কোনো পরিবর্তন করা হয় না**; প্রিভিউ ইন্টারফেসে অ্যাডমিন সবকিছু পর্যবেক্ষণ ও প্রয়োজনমাফিক কাস্টমাইজ করতে পারেন।
+  3. **৩. ট্রানজ্যাকশনাল কমিট পর্যায় (Transactional Commit Phase):**
+     - অ্যাডমিন "Confirm & Import" বাটনে চাপার পর সার্ভারে `POST /api/admin/questions/import-commit` কল হয়।
+     - সম্পূর্ণ কাজটি একটি একক PostgreSQL ট্রানজ্যাকশনের (`BEGIN ... COMMIT`) মধ্যে সম্পন্ন হয়:
+       - **ট্যাক্সোনমি আপসার্ট:** প্রয়োজনীয় নতুন অধ্যায়/টপিক থাকলে আগে আপসার্ট হয়।
+       - **প্রশ্ন আপসার্ট:** `INSERT INTO questions ... ON CONFLICT (id) DO UPDATE` ব্যবহার করে ডেটাবেজে ব্যাকওয়ার্ড কমপ্যাটিবিলিটির জন্য নরমালাইজড ও ডিনরমালাইজড কলাম উভয়েই লেখা হয়।
+       - **কাউন্টার রিক্যালকুলেশন:** একই ট্রানজ্যাকশনে `topics` টেবিলের `total_questions`, `mcq_count`, `written_count` এবং `chapters` টেবিলের `total_topics` রিয়েল-টাইম সাবকোয়েরি দিয়ে স্বয়ংক্রিয়ভাবে আপডেট করা হয়।
+       - কোনো ত্রুটি দেখা দিলে সম্পূর্ণ ট্রানজ্যাকশন `ROLLBACK` হয়, ফলে ডাটাবেজের ইন্টিগ্রিটি শতভাগ সুরক্ষিত থাকে।
+
+---
+
+## ১৫. ক্যাসকেডিং ট্যাক্সোনমি পিকার ও ট্যাক্সোনমি হেলথ ড্যাশবোর্ড (Cascading Taxonomy Picker & Health Dashboard)
+
+- **UI কম্পোনেন্ট:** `src/components/admin/CascadingTaxonomyPicker.tsx`
+  - **৪-স্তরের ড্রপডাউন:** Subject → Paper (স্বয়ংক্রিয়ভাবে ডিরাইভড) → Chapter → Topic।
+  - **লাইভ ফিল্টারিং ও সার্চিং:** টপিক বা অধ্যায়ের নাম টাইপ করে তাৎক্ষণিক ফিল্টার করার সুবিধা।
+  - **ইন-লাইন টপিক তৈরি (`+ নতুন টপিক তৈরি করুন`):** নির্বাচন চলাকালীন নতুন টপিক তৈরি করার মডাল যার মাধ্যমে তাৎক্ষণিক ডাটাবেজে নতুন টপিক তৈরি হয় এবং সিলেক্টরে স্বয়ংক্রিয়ভাবে রিফ্রেশ ও সিলেক্ট হয়ে যায়।
+  - **ইন্টিগ্রেশন:** অ্যাডমিন বাল্ক ইমপোর্ট এবং ম্যানুয়াল কোয়েশ্চেন এডিট ফর্মে (`AdminQuestionEditModal.tsx`) সরাসরি যুক্ত।
+
+- **ট্যাক্সোনমি হেলথ ড্যাশবোর্ড:** `src/components/admin/AdminTaxonomyHealthTab.tsx`
+  - **ডুপ্লিকেট টপিক ডিটেকশন:** একই অধ্যায়ের অধীনে অভিন্ন নরমালাইজড নামের সম্ভাব্য ডুপ্লিকেট টপিক শনাক্তকরণ ও এক ক্লিকে মার্জ করার সুবিধা (`/api/admin/taxonomy/merge-topics`)।
+  - **জিরো কোয়েশ্চেন টপিক ক্লিনিং:** যেসকল টপিকে কোনো প্রশ্ন নেই সেগুলো ফিল্টার করে এক ক্লিকে ট্রানজ্যাকশনালি ডিলিট করার সুবিধা (`/api/admin/taxonomy/delete-empty-topics`)।
+  - **অরফ্যান প্রশ্ন রি-অ্যাসাইনমেন্ট:** যেসকল প্রশ্নের `topic_id` ডাটাবেজে বিলুপ্ত হয়েছে, সেগুলোকে শনাক্ত করে নতুন টপিকে রি-অ্যাসাইন করার ব্যবস্থা (`/api/admin/taxonomy/reassign-orphans`)।
+  - **বাংলা নাম নরমালাইজেশন:** ZWJ, ZWNJ বা অসঙ্গত ইউনিকোডযুক্ত টপিকের নাম স্ট্যান্ডার্ডাইজ করার বাটন (`/api/admin/taxonomy/normalize-topic`)।
+  - **সকল অ্যাকশন সম্পূর্ণ ট্রানজ্যাকশনাল:** মার্জ, ডিলিট ও রি-অ্যাসাইন অপারেশনে `BEGIN ... COMMIT` ট্রানজ্যাকশন ও কাউন্টার রি-সিঙ্ক নিশ্চিত করা হয়।
+
+---
+
+## ১৬. লাইভ মাস্টার চার্ট এক্সপোর্ট এন্ডপয়েন্ট (Live Dynamic Master ID Chart Export)
+
+- **API এন্ডপয়েন্ট:** `GET /api/admin/taxonomy/export-master-chart` ও `GET /api/admin/taxonomy/tree`
+- **সুবিধা:** পূর্বে ফাইলে রাখা স্ট্যাটিক চার্টের পরিবর্তে লাইভ ডেটাবেজ থেকে রিয়েলটাইম `Subject ➔ Chapter ➔ Topic` কাঠামোর ফরম্যাটেড টেক্সট/Markdown চার্ট ও JSON ট্রি জেনারেট করে।
+- **এক্সপোর্ট ফিচার:** অ্যাডমিন ট্যাক্সোনমি হেলথ ট্যাব থেকে এক ক্লিকে লাইভ মাস্টার চার্ট কপি ও ডাউনলোড করতে পারেন।
+
+
+
+

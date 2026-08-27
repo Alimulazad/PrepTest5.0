@@ -1,0 +1,14 @@
+node_modules
+dist
+build
+coverage
+.git
+.github
+*.log
+.env
+.env.local
+.DS_Store
+*.db
+*.sqlite
+*.sqlite3
+admission.db

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="bn">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#1E3A8A" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>PrepTest | টেস্ট দাও বেস্ট হও</title>
+    <meta name="description" content="PrepTest — টেস্ট দাও বেস্ট হও। বাংলাদেশের ভার্সিটি ভর্তি পরীক্ষার জন্য পূর্ণাঙ্গ প্রশ্নব্যাংক, মক টেস্ট, ভুল খাতা ও জেমিনাই এআই মেন্টর।" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" integrity="sha384-nB0miv6/jRmo5UMMR1wu3Gz6NLsoTkbqJghGExxAU4Vm5HtQPsTA9DxDYAH3DIDr" crossorigin="anonymous">
+  </head>
+  <body class="bg-[#f8fafc] dark:bg-slate-900 text-slate-800 dark:text-slate-100 antialiased selection:bg-emerald-500 selection:text-white font-['Hind_Siliguri',sans-serif] transition-colors duration-200">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(() => {});
+        });
+      }
+    </script>
+  </body>
+</html>
+

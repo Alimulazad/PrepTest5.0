@@ -1,0 +1,25 @@
+{
+  "name": "যাচাই (JACHAI) - ভর্তি প্রস্তুতি প্ল্যাটফর্ম",
+  "short_name": "যাচাই",
+  "description": "বাংলাদেশের ভার্সিটি ভর্তি ও এইচএসসি বিজ্ঞান পরীক্ষার জন্য পূর্ণাঙ্গ প্রশ্নব্যাংক, মক টেস্ট, ভুল খাতা ও এআই মেন্টর।",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0F172A",
+  "theme_color": "#1E3A8A",
+  "orientation": "portrait",
+  "lang": "bn",
+  "icons": [
+    {
+      "src": "/assets/icon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/assets/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,243 @@
+# JACHAI (যাচাই) — Database Data Injection & Admin CMS Manual
+
+**Document Version:** 2.0 (Production Architecture)  
+**Target Audience:** Admins, Content Creators, OCR Engineers, Database Administrators
+
+---
+
+## ভূমিকা (Overview)
+এই ফাইলে JACHAI প্ল্যাটফর্মের ডেটাবেজে সঠিকভাবে **Subject**, **Chapter**, **Topic**, **Question**, **Drafts** এবং **Knowledge Snippet** যুক্ত ও রক্ষণাবেক্ষণ করার পূর্ণাঙ্গ নিয়মাবলী, SQL স্ক্রিপ্ট, JSON স্কিমা এবং Admin CMS ওয়ার্কফ্লো বিশদভাবে লিপিবদ্ধ করা হলো।
+
+---
+
+## ১. বিষয় ও অধ্যায়ের আইডি ও মেটাডাটা তালিকা (Subject & Chapter Reference)
+
+অ্যাপ্লিকেশনের `src/data/admissionData.ts` এবং ডেটাবেজে নিচের স্ট্যান্ডার্ড আইডি ফরম্যাট ব্যবহৃত হয়:
+
+### পদার্থবিজ্ঞান ১ম পত্র (`physics_1`)
+- `phy1_ch1`: ভৌতজগত ও পরিমাপ
+- `phy1_ch2`: ভেক্টর
+- `phy1_ch3`: গতিবিদ্যা
+- `phy1_ch4`: নিউটনিয়ান বলবিদ্যা
+- `phy1_ch5`: কাজ, শক্তি ও ক্ষমতা
+- `phy1_ch6`: মহাকর্ষ ও অভিকর্ষ
+- `phy1_ch7`: পদার্থের গাঠনিক ধর্ম
+- `phy1_ch8`: পর্যাবৃত্ত গতি
+- `phy1_ch9`: তরঙ্গ
+- `phy1_ch10`: আদর্শ গ্যাস ও গ্যাসের গতিতত্ত্ব
+
+### পদার্থবিজ্ঞান ২য় পত্র (`physics_2`)
+- `phy2_ch1`: তাপগতিবিদ্যা
+- `phy2_ch2`: স্থির তড়িৎ
+- `phy2_ch3`: চল তড়িৎ
+- `phy2_ch4`: তড়িৎ প্রবাহের চৌম্বক ক্রিয়া ও চুম্বকত্ব
+- `phy2_ch5`: তাড়িতচৌম্বকীয় আবেশ ও পরিবর্তী প্রবাহ
+- `phy2_ch6`: জ্যামিতিক আলোকবিজ্ঞান
+- `phy2_ch7`: ভৌত আলোকবিজ্ঞান
+- `phy2_ch8`: আধুনিক পদার্থবিজ্ঞানের সূচনা
+- `phy2_ch9`: পরমাণুর মডেল ও নিউক্লিয়ার পদার্থবিজ্ঞান
+- `phy2_ch10`: সেমিকন্ডাক্টর ও ইলেকট্রনিক্স
+- `phy2_ch11`: জ্যোতির্বিজ্ঞান
+
+### রসায়ন ১ম পত্র (`chemistry_1`)
+- `chem1_ch1`: ল্যাবরেটরির নিরাপদ ব্যবহার
+- `chem1_ch2`: গুণগত রসায়ন
+- `chem1_ch3`: মৌলের পর্যায়বৃত্ত ধর্ম ও রাসায়নিক বন্ধন
+- `chem1_ch4`: রাসায়নিক পরিবর্তন
+- `chem1_ch5`: কর্মমুখী রসায়ন
+
+### রসায়ন ২য় পত্র (`chemistry_2`)
+- `chem2_ch1`: পরিবেশ রসায়ন
+- `chem2_ch2`: জৈব রসায়ন
+- `chem2_ch3`: পরিমাণগত রসায়ন
+- `chem2_ch4`: তড়িৎ রসায়ন
+- `chem2_ch5`: অর্থনৈতিক রসায়ন
+
+### উচ্চতর গণিত ১ম পত্র (`math_1`)
+- `math1_ch1`: ম্যাট্রিক্স ও নির্ণায়ক
+- `math1_ch3`: সরলরেখা
+- `math1_ch4`: বৃত্ত
+- `math1_ch7`: সংযুক্ত কোণের ত্রিকোণমিতিক অনুপাত
+- `math1_ch9`: অন্তরীকরণ (Differentiation)
+- `math1_ch10`: যোগজীকরণ (Integration)
+
+### উচ্চতর গণিত ২য় পত্র (`math_2`)
+- `math2_ch3`: জটিল সংখ্যা
+- `math2_ch4`: বহুপদী ও বহুপদী সমীকরণ
+- `math2_ch6`: কণিক
+- `math2_ch7`: বিপরীত ত্রিকোণমিতিক ফাংশন ও সমীকরণ
+- `math2_ch8`: স্থিতিবিদ্যা
+- `math2_ch9`: গতিবিদ্যা
+
+### জীববিজ্ঞান ১ম পত্র (`biology_1`)
+- `bio1_ch1`: কোষ ও এর গঠন
+- `bio1_ch2`: কোষ বিভাজন
+- `bio1_ch4`: অণুজীব
+- `bio1_ch8`: টিস্যু ও টিস্যুতন্ত্র
+- `bio1_ch9`: উদ্ভিদ শারীরতত্ত্ব
+- `bio1_ch10`: উদ্ভিদ প্রজনন
+- `bio1_ch11`: জীবপ্রযুক্তি
+
+### জীববিজ্ঞান ২য় পত্র (`biology_2`)
+- `bio2_ch1`: প্রাণীর বিভিন্নতা ও শ্রেণিবিন্যাস
+- `bio2_ch2`: প্রাণীর পরিচিতি
+- `bio2_ch3`: মানব শারীরতত্ত্ব: পরিপাক ও শোষণ
+- `bio2_ch4`: মানব শারীরতত্ত্ব: রক্ত ও সংবহন
+- `bio2_ch5`: মানব শারীরতত্ত্ব: শ্বাসক্রিয়া ও শ্বসন
+- `bio2_ch7`: চলন ও অঙ্গচালনা
+- `bio2_ch8`: সমন্বয় ও নিয়ন্ত্রণ
+- `bio2_ch11`: জিনতত্ত্ব ও বিবর্তন
+
+---
+
+## ২. Database Data Entry (SQL Schemas & Batch Insertion)
+
+ডেটাবেজের প্রধান টেবিলগুলো PostgreSQL এবং SQLite ইন-মেমোরি উভয়ের সাথেই সামঞ্জস্যপূর্ণ:
+
+### A. `topics` টেবিল ও SQL ইনসার্ট ফরম্যাট
+
+```sql
+INSERT INTO topics (
+  id, chapter_id, subject_id, paper, topic_code, name, bangla_name,
+  star_rating, total_questions, completed_questions, mcq_count, written_count,
+  exam_occurrences, key_points, created_at
+) VALUES (
+  'c1c5_s1',
+  'chem1_ch5',
+  'chemistry_1',
+  '1st',
+  'T-01',
+  'Food Preservatives & Antioxidants',
+  'খাদ্য সংরক্ষক (প্রিজারভেটিভস ও অ্যান্টিঅক্সিডেন্ট)',
+  3,
+  80,
+  0,
+  25,
+  1,
+  '{"mcq":"JnU 24-25, JU 23-24","written":"JnU 18-19"}',
+  '["সোডিয়াম বেনজোয়েট: অনুমোদিত মাত্রা ২০০ ppm","ভিনেগার: ৬-১০% অ্যাসিটিক এসিড"]',
+  1771680000000
+) ON CONFLICT (id) DO UPDATE SET
+  name = EXCLUDED.name,
+  bangla_name = EXCLUDED.bangla_name,
+  star_rating = EXCLUDED.star_rating,
+  key_points = EXCLUDED.key_points;
+```
+
+### B. `questions` টেবিল ও SQL ইনসার্ট ফরম্যাট
+
+```sql
+INSERT INTO questions (
+  id, subject_id, subject_name, paper, chapter_id, chapter_name,
+  topic_id, topic_name, category, question_text, math_formula_latex,
+  options, correct_ans, explanation, explanation_latex,
+  tags, star_rating, type, difficulty, created_at
+) VALUES (
+  'q_chem1_001',
+  'chemistry_1',
+  'রসায়ন ১ম পত্র',
+  '1st',
+  'chem1_ch5',
+  'কর্মমুখী রসায়ন',
+  'c1c5_s1',
+  'খাদ্য সংরক্ষক (প্রিজারভেটিভস ও অ্যান্টিঅক্সিডেন্ট)',
+  'varsity_a',
+  'খাদ্য প্রক্রিয়াজাতকরণে ব্যবহৃত অনুমোদিত প্রিজারভেটিভ সোডিয়াম বেনজোয়েটের সর্বোচ্চ নিরাপদ মাত্রা কত?',
+  'C_6H_5COONa',
+  '{"A":"100 ppm","B":"200 ppm","C":"500 ppm","D":"1000 ppm"}',
+  'B',
+  'সোডিয়াম বেনজোয়েট (Sodium Benzoate) অম্লীয় মাধ্যমে (pH < 4.5) কার্যকর থাকে। এর অনুমোদিত নিরাপদ মাত্রা হলো সর্বোচ্চ ২০০ ppm।',
+  '\\text{Safe Limit} \\le 200\\text{ ppm}',
+  '["JnU 24-25","JU 23-24","Varsity A","Main Book"]',
+  3,
+  'mcq',
+  'easy',
+  1771680000000
+) ON CONFLICT (id) DO UPDATE SET
+  question_text = EXCLUDED.question_text,
+  options = EXCLUDED.options,
+  correct_ans = EXCLUDED.correct_ans,
+  explanation = EXCLUDED.explanation;
+```
+
+---
+
+## ৩. Admin CMS Workflow & Drafts Management
+
+JACHAI প্ল্যাটফর্মে ডেটা যুক্ত করার ২টি প্রধান উপায় রয়েছে:
+
+### ১. Admin Web Panel (`/admin`)
+- **Login:** `/admin` রুটে যান এবং সুরক্ষিত অ্যাডমিন পাসওয়ার্ড প্রদান করে JWT টোকেন গ্রহণ করুন।
+- **Question Management:** অ্যাডমিন প্যানেলের "প্রশ্ন তৈরি করুন" বাটনে ক্লিক করে নতুন প্রশ্ন ড্রাফট বা সরাসরি পাবলিশ করা যায়।
+- **Topic Linkage:** প্রতিটি প্রশ্নের জন্য সাবজেক্ট ও চ্যাপ্টার সিলেক্ট করলে সংশ্লিষ্ট টপিকগুলোর ড্রপডাউন স্বয়ংক্রিয়ভাবে লোড হয়।
+- **Bulk Import (JSON Batch):** একসঙ্গে একাধিক প্রশ্ন ইমপোর্ট করতে JSON অ্যারে পেস্ট করে "Batch Upload" করা যায়।
+
+### ২. Drafts Review & Approval Queue (`/api/admin/drafts`)
+- এআই এক্সট্রাকশন বা বাইরের অপারেটরদের ইনপুট সরাসরি মূল প্রশ্ন ব্যাংকে যায় না; এগুলো `admin_drafts` টেবিলে `status = 'pending'` হিসেবে জমা হয়।
+- অ্যাডমিন প্যানেলের "Drafts Queue" ট্যাবে পেন্ডিং প্রশ্নগুলোর প্রিভিউ, ম্যাথ ল্যাটেক্স এবং সঠিক উত্তর দেখা যায়।
+- **Approve:** প্রশ্নটি যাচাই করে `POST /api/admin/drafts/:id/review` (`{ "action": "approve" }`) পাঠালে স্বয়ংক্রিয়ভাবে `questions` টেবিলে যুক্ত হয়ে যায়।
+- **Reject:** ত্রুটিপূর্ণ প্রশ্ন বাতিল করা যায়।
+
+---
+
+## ৪. AI Extraction Format (Text, OCR & Photo Parsing)
+
+অ্যাডমিন প্যানেলের **AI Question Extractor** বা `/api/admin/extract` রুট দিয়ে প্রশ্নপত্রের পিডিএফ টেক্সট, স্ক্যানড ছবি বা প্রশ্নব্যাংকের কপি পেস্ট করলে এআই নিচে উল্লেখিত সুনির্দিষ্ট JSON ফরম্যাটে আউটপুট প্রদান করে:
+
+```json
+{
+  "questions": [
+    {
+      "subject": "physics_1",
+      "paper": 1,
+      "chapterId": "phy1_ch2",
+      "topic": "ভেক্টর যোগ ও বিয়োগ",
+      "questionText": "দুটি সমান ভেক্টরের লব্ধি তাদের যেকোনো একটির মানের সমান হলে ভেক্টরদ্বয়ের মধ্যবর্তী কোণ কত?",
+      "math_formula_latex": "R = \\sqrt{P^2 + Q^2 + 2PQ\\cos\\alpha}",
+      "options": [
+        { "id": "A", "text": "$60^\\circ$" },
+        { "id": "B", "text": "$90^\\circ$" },
+        { "id": "C", "text": "$120^\\circ$" },
+        { "id": "D", "text": "$180^\\circ$" }
+      ],
+      "correctAnswer": "C",
+      "explanation": "যেহেতু $P = Q = R$, সুতরাং $P^2 = P^2 + P^2 + 2P^2\\cos\\alpha \\implies \\cos\\alpha = -\\frac{1}{2} \\implies \\alpha = 120^\\circ$।",
+      "explanation_latex": "\\cos\\alpha = -0.5 \\implies \\alpha = 120^\\circ",
+      "university": "DU",
+      "year": "2023-24",
+      "difficulty": "medium",
+      "tags": ["DU 23-24", "Engineering", "Vector", "Important"]
+    }
+  ]
+}
+```
+
+### AI এক্সট্রাকশনের ক্ষেত্রে গুরুত্বপূর্ণ নিয়মাবলি:
+1. অপশনগুলোর কি (Key) অবশ্যই `options` অবজেক্ট বা অ্যারে আকারে `A, B, C, D` লেবেল যুক্ত থাকবে।
+2. গাণিতিক সূত্র, পাওয়ার, ভগ্নাংশ ও গ্রিক অক্ষরের জন্য স্ট্যান্ডার্ড LaTeX ফরম্যাট (যেমন: `\\frac{a}{b}`, `\\sqrt{x}`, `\\theta`, `\\lambda`) ব্যবহার করা বাধ্যতামূলক।
+3. প্রতিটি প্রশ্নের জন্য বিশ্ববিদ্যালয় ও সাল সংবলিত ট্যাগ (যেমন: `"DU 22-23"`, `"BUET 21-22"`, `"GST 23-24"`) যুক্ত করতে হবে।
+
+---
+
+## ৫. Metadata Configuration & `admissionData.ts` Extension
+
+নতুন বিষয় বা চ্যাপ্টার যোগ করার সময় নিচের ফাইলগুলো আপডেট করা আবশ্যক:
+
+1. **`src/data/admissionData.ts`:**
+   - `SUBJECTS_DATA`: নতুন বিষয়ের বাংলা নাম, আইকন এবং কোড যুক্ত করুন।
+   - `CHAPTERS_DATA`: অধ্যায়ের আইডি (`subject_chX`), শিরোনাম এবং পেপার সংখ্যা কনফিগার করুন।
+   - `UNIVERSITIES_DATA`: নতুন বিশ্ববিদ্যালয়ের ভর্তি পরীক্ষার ধরণ ও মানবন্টন যুক্ত করুন।
+
+2. **Types Consistency (`src/types.ts`):**
+   - নিশ্চিত করুন `SubjectId` এবং `ChapterId` টাইপগুলো নতুন আইডির সাথে মিলে।
+   - ফ্রন্টএন্ড এবং ব্যাকএন্ড উভয়ের জন্য সুনির্দিষ্ট ফিল্ড নেমিং (`questionText` / `question_text`) স্ট্যান্ডার্ডাইজড রূপান্তরকারী ফাংশনের মাধ্যমে হ্যান্ডেল করা হয়।
+
+---
+
+## ৬. ডেটা এন্ট্রি ভ্যালিডেশন চেকলিস্ট
+
+- [x] প্রতিটি প্রশ্নের `correct_ans` অবশ্যই 'A', 'B', 'C', বা 'D'।
+- [x] গণিতের সমীকরণগুলোতে LaTeX ব্যাকস্ল্যাশ এস্কেপ করা হয়েছে (`\\text{}`, `\\frac{}`).
+- [x] `chapter_id` ও `subject_id` রেফারেন্সিং টেবিলের সাথে শতভাগ সামঞ্জস্যপূর্ণ।
+- [x] `tags` অ্যারেতে বিশ্ববিদ্যালয়ের নাম ও শিক্ষাবর্ষ অন্তর্ভুক্ত রয়েছে।
+- [x] `explanation` ফিল্ডে শিক্ষার্থীদের জন্য বোধগম্য বাংলা সমাধান বিদ্যমান।

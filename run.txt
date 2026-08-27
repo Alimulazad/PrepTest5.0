@@ -1,0 +1,326 @@
+================================================================================
+          JACHAI (যাচাই) — COMPREHENSIVE DEPLOYMENT & EXECUTION MANUAL
+================================================================================
+Document Version: 3.0 (Multi-Page Split, Admin Hub Separation & Real-Time Telemetry)
+Supported Platforms: Android Termux, Cloud Serverless/Free Tier, Sketchware Pro WebView
+
+This guide provides exact step-by-step instructions to run, host, and embed JACHAI
+across three distinct deployment environments.
+
+================================================================================
+ARCHITECTURE OVERVIEW: ISOLATED MULTI-PAGE APPS & REAL-TIME TELEMETRY
+================================================================================
+JACHAI is architected with complete frontend decoupling:
+1. Public Student Portal:
+   - Entry Point: `index.html` -> `src/main.tsx` -> `src/App.tsx`
+   - Serves students on `/`, `/questions`, `/exam`, `/progress`, `/history`.
+   - Automatically emits non-blocking heartbeats (`/api/user/heartbeat`) with device info
+     and active page state.
+2. Independent Standalone Admin Hub:
+   - Entry Point: `admin.html` -> `src/admin-main.tsx` -> `src/AdminApp.tsx`
+   - Served securely on `/admin*` and `/admin-portal`.
+   - Completely isolated React root, state tree, and bundle from student users.
+   - Includes real-time active users telemetry tab (`AdminActiveUsersTab`), AI extraction pipeline,
+     draft approvals, live question CRUD, API key pool manager, and system health monitors.
+3. Unified Production Server:
+   - Express backend on port 3000 routes `/admin*` requests to `dist/admin.html`
+     and all other SPA requests to `dist/index.html`.
+
+================================================================================
+ENVIRONMENT A: TERMUX (ANDROID LOCAL RUNTIME)
+================================================================================
+You can run the full JACHAI stack (Node.js backend, built React frontend, and local
+SQLite/Postgres in-memory engine) directly on your Android phone without root access.
+
+--------------------------------------------------------------------------------
+1. Prerequisites & Termux Setup
+--------------------------------------------------------------------------------
+Open Termux and update the package repositories:
+```bash
+pkg update -y && pkg upgrade -y
+```
+
+Grant storage permissions to allow saving assets and project files:
+```bash
+termux-setup-storage
+```
+
+Acquire Wake Lock to prevent Android from killing Termux in the background:
+```bash
+termux-wake-lock
+```
+
+--------------------------------------------------------------------------------
+2. Install Node.js, Git & Build Tools
+--------------------------------------------------------------------------------
+Install Node.js (LTS), Git, and essential build packages:
+```bash
+pkg install -y nodejs-lts git python make clang
+```
+
+Verify installation versions:
+```bash
+node -v   # Should be v18+ or v20+
+npm -v    # Should be v9+ or v10+
+git --version
+```
+
+--------------------------------------------------------------------------------
+3. Clone / Extract JACHAI Project
+--------------------------------------------------------------------------------
+Navigate to your preferred directory:
+```bash
+cd ~
+# If cloning from Git:
+# git clone <your-repository-url> jachai
+# cd jachai
+
+# If working from internal storage (e.g. Download folder):
+# cd /sdcard/Download/jachai
+```
+
+--------------------------------------------------------------------------------
+4. Install Dependencies & Build
+--------------------------------------------------------------------------------
+Install all required Node.js packages:
+```bash
+npm install
+```
+
+Configure local environment variables by creating `.env`:
+```bash
+cat << 'EOF' > .env
+NODE_ENV=production
+PORT=3000
+JWT_SECRET=termux-local-dev-jwt-secret-key-2026
+ADMIN_PASSWORD=admin
+# Leave DATABASE_URL empty to use the automatic in-memory SQLite engine
+DATABASE_URL=
+# Optional AI Keys:
+GEMINI_API_KEY=
+OPENROUTER_API_KEY=
+LOG_LEVEL=info
+EOF
+```
+
+Compile the client bundle and server script:
+```bash
+npm run build
+```
+
+--------------------------------------------------------------------------------
+5. Launching the Application
+--------------------------------------------------------------------------------
+Start the production server:
+```bash
+npm run start
+```
+Or for live development mode:
+```bash
+npm run dev
+```
+
+--------------------------------------------------------------------------------
+6. Accessing on Android
+--------------------------------------------------------------------------------
+- On the same phone: Open Chrome / Kiwi Browser and navigate to:
+  http://localhost:3000
+- On other devices connected to the same Wi-Fi / Hotspot:
+  Check phone IP via `ifconfig` (e.g., `192.168.43.1`) and browse to:
+  http://192.168.43.1:3000
+
+--------------------------------------------------------------------------------
+7. Termux Background Execution (Optional)
+--------------------------------------------------------------------------------
+To run the server continuously in the background:
+```bash
+npm install -g pm2
+pm2 start dist/server.cjs --name jachai
+pm2 save
+```
+
+================================================================================
+ENVIRONMENT B: FREE BACKEND CLOUD HOSTING (RENDER / RAILWAY / KOYEB / SUPABASE / NEON)
+================================================================================
+Deploy the JACHAI full-stack API and frontend to free/affordable cloud infrastructure
+with a managed PostgreSQL database.
+
+--------------------------------------------------------------------------------
+1. Database Setup: Neon / Supabase (Free PostgreSQL)
+--------------------------------------------------------------------------------
+A. Neon (neon.tech):
+   1. Create a free account at https://neon.tech
+   2. Create a new project named `jachai-db`.
+   3. Copy the Connection String URI. Example:
+      `postgresql://username:password@ep-cool-mountain-123456.ap-southeast-1.aws.neon.tech/jachai?sslmode=require`
+
+B. Supabase (supabase.com):
+   1. Create a free project at https://supabase.com
+   2. Navigate to Project Settings -> Database -> Connection string -> URI (Pooled or Direct).
+   3. Copy the URI and replace the password placeholder.
+
+--------------------------------------------------------------------------------
+2. Deploying on Render (render.com)
+--------------------------------------------------------------------------------
+1. Fork or push your JACHAI repository to GitHub.
+2. Sign in to https://dashboard.render.com and click **New +** -> **Web Service**.
+3. Connect your GitHub repository.
+4. Configure service settings:
+   - **Name:** `jachai-api`
+   - **Environment:** `Node`
+   - **Region:** Singapore (`ap-southeast-1`) or Oregon (`us-west-1`)
+   - **Branch:** `main`
+   - **Build Command:** `npm install && npm run build`
+   - **Start Command:** `node dist/server.cjs`
+   - **Plan:** Free
+
+5. Configure Environment Variables in Render Dashboard:
+   - `NODE_ENV` = `production`
+   - `PORT` = `3000` (or leave default, Render sets `PORT` automatically)
+   - `DATABASE_URL` = `<Your Neon or Supabase PostgreSQL URI>`
+   - `JWT_SECRET` = `<Generate a 32+ character random string>`
+   - `ADMIN_PASSWORD` = `<Your secure admin password>`
+   - `GEMINI_API_KEY` = `<Your Google Gemini API Key>`
+   - `OPENROUTER_API_KEY` = `<Your OpenRouter API Key>`
+   - `CLOUDINARY_CLOUD_NAME` = `<Optional Cloudinary Name>`
+   - `CLOUDINARY_API_KEY` = `<Optional Cloudinary Key>`
+   - `CLOUDINARY_API_SECRET` = `<Optional Cloudinary Secret>`
+   - `CORS_ORIGIN` = `*`
+
+6. Click **Deploy Web Service**.
+   Render will build the Vite frontend, bundle the Express server, run automated
+   PostgreSQL migrations on startup, and provide a live URL:
+   `https://jachai-api.onrender.com`
+
+--------------------------------------------------------------------------------
+3. Deploying on Koyeb / Railway (Docker Deployment)
+--------------------------------------------------------------------------------
+Since JACHAI includes a root `Dockerfile`, you can deploy directly via Docker:
+1. Link your GitHub repository in Koyeb (koyeb.com) or Railway (railway.app).
+2. Choose **Dockerfile** as the deployment builder.
+3. Inject the same Environment Variables listed above.
+4. Set the Health Check path to `/api/health` on port `3000`.
+
+================================================================================
+ENVIRONMENT C: SKETCHWARE PRO / ANDROID WEBVIEW INTEGRATION
+================================================================================
+Transform the JACHAI React Single Page Application into a standalone native Android
+APK using Sketchware Pro with full offline/cloud hybrid capabilities.
+
+--------------------------------------------------------------------------------
+1. Building the Frontend Bundle for Mobile
+--------------------------------------------------------------------------------
+Build the web assets locally:
+```bash
+npm run build
+```
+This outputs all HTML, CSS, JavaScript chunks, and images into the `/dist` directory.
+
+--------------------------------------------------------------------------------
+2. Sketchware Pro Project Configuration
+--------------------------------------------------------------------------------
+1. Open Sketchware Pro on your Android device and create a new project:
+   - **Application Name:** JACHAI - যাচাই
+   - **Package Name:** `com.jachai.admissionprep`
+   - **Minimum SDK:** API 21 (Android 5.0 Lollipop)
+   - **Target SDK:** API 34+ (Android 14)
+
+2. Manifest & Android Permissions Setup:
+   Add the following permissions in Sketchware Pro -> Android Manifest Manager:
+   ```xml
+   <uses-permission android:name="android.permission.INTERNET" />
+   <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+   <uses-permission android:name="android.permission.CAMERA" />
+   <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+   <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+   ```
+
+3. Enable Cleartext Traffic (Required if using HTTP test endpoints):
+   In the `<application>` tag of `AndroidManifest.xml`:
+   ```xml
+   <application
+       android:usesCleartextTraffic="true"
+       android:hardwareAccelerated="true"
+       ... >
+   ```
+
+--------------------------------------------------------------------------------
+3. WebView Layout & Logic in Sketchware Pro
+--------------------------------------------------------------------------------
+A. View Designer:
+   - Drag a `WebView` widget onto `main.xml` and give it ID: `webview1`.
+   - Set Width and Height to `MATCH_PARENT`.
+
+B. `MainActivity` -> `onCreate` Event Logic:
+   Insert the following Source Code Block in `onCreate`:
+
+   ```java
+   // 1. Configure WebView Settings
+   WebSettings webSettings = webview1.getSettings();
+   webSettings.setJavaScriptEnabled(true);
+   webSettings.setDomStorageEnabled(true);
+   webSettings.setDatabaseEnabled(true);
+   webSettings.setAllowFileAccess(true);
+   webSettings.setAllowContentAccess(true);
+   webSettings.setAllowFileAccessFromFileURLs(true);
+   webSettings.setAllowUniversalAccessFromFileURLs(true);
+   webSettings.setCacheMode(WebSettings.LOAD_DEFAULT);
+   webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+   webSettings.setRenderPriority(WebSettings.RenderPriority.HIGH);
+   webSettings.setEnableSmoothTransition(true);
+
+   // 2. Custom WebViewClient for internal navigation
+   webview1.setWebViewClient(new WebViewClient() {
+       @Override
+       public boolean shouldOverrideUrlLoading(WebView view, String url) {
+           view.loadUrl(url);
+           return true;
+       }
+       @Override
+       public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
+           // Handle offline state or server downtime
+           super.onReceivedError(view, errorCode, description, failingUrl);
+       }
+   });
+
+   // 3. Custom WebChromeClient for Camera / Photo-solve file inputs
+   webview1.setWebChromeClient(new WebChromeClient() {
+       // Support file upload dialogues and alert popups
+   });
+
+   // 4. Loading JACHAI URL
+   // Option A: Hosted Cloud Backend (Recommended)
+   webview1.loadUrl("https://your-jachai-render-app.onrender.com");
+
+   // Option B: Local Embedded Assets (/android_asset/)
+   // webview1.loadUrl("file:///android_asset/dist/index.html");
+   ```
+
+C. Android Hardware Back Button Handling:
+   In `MainActivity` -> `onBackPressed` Event:
+   ```java
+   if (webview1.canGoBack()) {
+       webview1.goBack();
+   } else {
+       finish();
+   }
+   ```
+
+--------------------------------------------------------------------------------
+4. Mobile Asset Packaging (Offline Mode)
+--------------------------------------------------------------------------------
+If you prefer running completely offline without a remote server:
+1. Copy the contents of the `/dist` directory into the Sketchware project `assets` directory:
+   `/app/src/main/assets/dist/`
+2. Configure the API requests inside the React codebase to communicate with your
+   cloud Express instance URL or fallback to in-memory local storage cache.
+
+================================================================================
+5. Verification & Troubleshooting Checklist
+================================================================================
+- [x] Node.js server starts cleanly with `node dist/server.cjs` on port 3000.
+- [x] PostgreSQL connection string verifies and runs migrations (`001_initial_schema`).
+- [x] Termux wake-lock enabled to prevent process sleep when the screen locks.
+- [x] WebViews have `domStorageEnabled` enabled for JWT tokens and bookmark storage.
+- [x] All AI prompts and responses render in clean Bengali display typography.
+================================================================================
