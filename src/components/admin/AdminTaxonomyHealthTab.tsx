@@ -6,10 +6,12 @@ import {
   deleteEmptyTopicsApi,
   reassignOrphanQuestionsApi,
   fetchMasterChartApi,
+  fetchTaxonomyAuditLogsApi,
   TaxonomyHealthSummary,
   DuplicateSuspectGroup,
   ZeroQuestionTopicItem,
   OrphanedQuestionItem,
+  TaxonomyAuditLogItem,
 } from '../../services/api';
 import { CascadingTaxonomyPicker, TaxonomySelectionValue } from './CascadingTaxonomyPicker';
 import {
@@ -36,6 +38,7 @@ import {
   X,
   AlertCircle,
   HelpCircle,
+  History,
 } from 'lucide-react';
 
 export const AdminTaxonomyHealthTab: React.FC = () => {
@@ -45,10 +48,14 @@ export const AdminTaxonomyHealthTab: React.FC = () => {
   const [successToast, setSuccessToast] = useState<string | null>(null);
 
   // Active sub-tab
-  const [activeSubTab, setActiveSubTab] = useState<'duplicates' | 'empty' | 'orphans' | 'chart'>('duplicates');
+  const [activeSubTab, setActiveSubTab] = useState<'duplicates' | 'empty' | 'orphans' | 'chart' | 'audit'>('duplicates');
 
   // Search & filter states
   const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Audit Logs State
+  const [auditLogs, setAuditLogs] = useState<TaxonomyAuditLogItem[]>([]);
+  const [isAuditLoading, setIsAuditLoading] = useState<boolean>(false);
 
   // Merge Modal State
   const [selectedMergeGroup, setSelectedMergeGroup] = useState<DuplicateSuspectGroup | null>(null);
@@ -94,9 +101,27 @@ export const AdminTaxonomyHealthTab: React.FC = () => {
     }
   };
 
+  const loadAuditLogs = async () => {
+    try {
+      setIsAuditLoading(true);
+      const logs = await fetchTaxonomyAuditLogsApi(100);
+      setAuditLogs(logs);
+    } catch (err: any) {
+      console.error('Error loading taxonomy audit logs:', err);
+    } finally {
+      setIsAuditLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadHealthData();
   }, []);
+
+  useEffect(() => {
+    if (activeSubTab === 'audit') {
+      loadAuditLogs();
+    }
+  }, [activeSubTab]);
 
   const showToast = (msg: string) => {
     setSuccessToast(msg);
@@ -474,6 +499,18 @@ export const AdminTaxonomyHealthTab: React.FC = () => {
             <FileText className="w-3.5 h-3.5" />
             লাইভ মাস্টার আইডি চার্ট
           </button>
+
+          <button
+            onClick={() => { setActiveSubTab('audit'); setSearchQuery(''); }}
+            className={`px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 transition ${
+              activeSubTab === 'audit'
+                ? 'bg-teal-600 text-white shadow-md shadow-teal-600/20'
+                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <History className="w-3.5 h-3.5" />
+            ট্যাক্সোনমি অডিট লগ
+          </button>
         </div>
 
         {/* Global Search Bar for Current Tab */}
@@ -836,6 +873,137 @@ export const AdminTaxonomyHealthTab: React.FC = () => {
               </div>
             ) : (
               <pre className="whitespace-pre-wrap">{masterChartContent}</pre>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* SUB-TAB 5: TAXONOMY AUDIT LOGS */}
+      {/* ========================================================================= */}
+      {activeSubTab === 'audit' && (
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                <History className="w-4 h-4 text-teal-500" />
+                ট্যাক্সোনমি পরিবর্তন অডিট লগ (Taxonomy Audit Trail)
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                টপিক মার্জ, নাম পরিবর্তন, নতুন টপিক সংযোজন এবং ক্লিনআপের সম্পূর্ণ ট্রানজেকশনাল রেকর্ড।
+              </p>
+            </div>
+
+            <button
+              onClick={loadAuditLogs}
+              disabled={isAuditLoading}
+              className="px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold flex items-center gap-1.5 transition"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isAuditLoading ? 'animate-spin' : ''}`} />
+              অডিট লগ রিফ্রেশ
+            </button>
+          </div>
+
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-xs">
+            {isAuditLoading ? (
+              <div className="py-16 text-center text-slate-500 text-xs flex items-center justify-center gap-2">
+                <RefreshCw className="w-4 h-4 animate-spin text-teal-500" />
+                অডিট হিস্ট্রি লোড হচ্ছে...
+              </div>
+            ) : auditLogs.length === 0 ? (
+              <div className="py-16 text-center text-slate-400 text-xs">
+                কোনো অডিট রেকর্ড পাওয়া যায়নি।
+              </div>
+            ) : (
+              <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-slate-50 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 font-bold border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10">
+                    <tr>
+                      <th className="py-3 px-4 w-36">সময় (Time)</th>
+                      <th className="py-3 px-4 w-28">অ্যাকশন (Action)</th>
+                      <th className="py-3 px-4 w-44">টার্গেট ID (Entity ID)</th>
+                      <th className="py-3 px-4">পরিবর্তনের বিবরণ (Details)</th>
+                      <th className="py-3 px-4 w-28 text-center">সম্পাদনকারী</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {auditLogs
+                      .filter((log) => {
+                        if (!searchQuery) return true;
+                        const q = searchQuery.toLowerCase();
+                        return (
+                          log.action.toLowerCase().includes(q) ||
+                          log.entity_id.toLowerCase().includes(q) ||
+                          JSON.stringify(log.details).toLowerCase().includes(q) ||
+                          log.performed_by.toLowerCase().includes(q)
+                        );
+                      })
+                      .map((log) => {
+                        const dateStr = new Date(log.created_at).toLocaleString('bn-BD', {
+                          day: 'numeric',
+                          month: 'short',
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        });
+
+                        const actionBadgeClass =
+                          log.action === 'MERGE'
+                            ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                            : log.action === 'NORMALIZE'
+                            ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300'
+                            : log.action === 'DELETE'
+                            ? 'bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-300'
+                            : log.action === 'CREATE'
+                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                            : 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300';
+
+                        return (
+                          <tr key={log.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
+                            <td className="py-3 px-4 text-slate-500 font-mono text-[11px] whitespace-nowrap">
+                              {dateStr}
+                            </td>
+                            <td className="py-3 px-4">
+                              <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] tracking-wide ${actionBadgeClass}`}>
+                                {log.action}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 font-mono font-bold text-slate-700 dark:text-slate-300 text-[11px]">
+                              {log.entity_id}
+                            </td>
+                            <td className="py-3 px-4 text-slate-600 dark:text-slate-300 font-sans text-xs">
+                              {log.details?.survivor_name ? (
+                                <div className="space-y-0.5">
+                                  <div>
+                                    সারভাইভার: <span className="font-bold text-slate-900 dark:text-white">{log.details.survivor_bangla_name || log.details.survivor_name}</span>
+                                  </div>
+                                  <div className="text-[11px] text-slate-500">
+                                    মার্জ করা টপিক: {log.details.source_ids?.length || 0} টি (MCQ: {log.details.reassigned_mcqs || 0}, Written: {log.details.reassigned_written || 0})
+                                  </div>
+                                </div>
+                              ) : log.details?.new_bangla_name ? (
+                                <div>
+                                  নতুন নাম: <span className="font-bold text-slate-900 dark:text-white">{log.details.new_bangla_name}</span> ({log.details.new_name})
+                                </div>
+                              ) : log.details?.deleted_topic_ids ? (
+                                <div>
+                                  মুছে ফেলা আইডি: <span className="font-mono text-red-600 dark:text-red-400">{log.details.deleted_topic_ids.join(', ')}</span>
+                                </div>
+                              ) : (
+                                <pre className="text-[11px] font-mono bg-slate-50 dark:bg-slate-800 p-1.5 rounded-md overflow-x-auto max-w-md">
+                                  {JSON.stringify(log.details, null, 2)}
+                                </pre>
+                              )}
+                            </td>
+                            <td className="py-3 px-4 text-center font-mono text-[11px] text-slate-500">
+                              {log.performed_by || 'admin'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>

@@ -69,6 +69,8 @@ import {
   deleteEmptyTopicsService,
   reassignOrphanQuestionsService,
   exportMasterChartService,
+  createTopicService,
+  getTaxonomyAuditLogsService,
 } from './server/services/taxonomyService.js';
 import { uploadQuestionImages, uploadSingleImage } from './server/utils/upload.js';
 import { logger } from './server/utils/logger.js';
@@ -1939,6 +1941,36 @@ app.get(['/api/admin/taxonomy/master-chart', '/api/taxonomy/master-chart'], asyn
   }
 });
 
+// GET /api/admin/taxonomy/audit-logs (Get recent audit history of taxonomy mutations)
+app.get('/api/admin/taxonomy/audit-logs', authenticateAdmin, async (req: Request, res: Response) => {
+  try {
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 50));
+    const logs = await getTaxonomyAuditLogsService(limit);
+    return res.json({ success: true, count: logs.length, logs });
+  } catch (error: any) {
+    console.error('Error fetching taxonomy audit logs:', error);
+    return res.status(500).json({ error: 'Failed to fetch taxonomy audit logs', details: error.message });
+  }
+});
+
+// POST /api/admin/taxonomy/create-topic (Create a single topic with automatic ID and audit logging)
+app.post('/api/admin/taxonomy/create-topic', authenticateAdmin, async (req: Request, res: Response) => {
+  try {
+    const topicData = req.body;
+    if (!topicData.name && !topicData.bangla_name) {
+      return res.status(400).json({ error: 'Topic name is required' });
+    }
+    if (!topicData.chapter_id) {
+      return res.status(400).json({ error: 'Chapter ID is required' });
+    }
+    const created = await createTopicService(topicData, (req as any).user?.name || 'admin');
+    return res.status(201).json({ success: true, topic: created });
+  } catch (error: any) {
+    console.error('Error creating topic:', error);
+    return res.status(500).json({ error: 'Failed to create topic', details: error.message });
+  }
+});
+
 // POST /api/admin/questions/bulk-import (Bulk import questions with Zod validation - Protected Admin)
 app.post(
   '/api/admin/questions/bulk-import',
@@ -2184,10 +2216,10 @@ app.post('/api/topics', authenticateAdmin, async (req: Request, res: Response) =
       return res.status(400).json({ error: 'Chapter ID is required' });
     }
 
-    const created = await insertTopic(topicData);
+    const created = await createTopicService(topicData, (req as any).user?.name || 'admin');
     return res.status(201).json(created);
   } catch (error: any) {
-    console.error('Error inserting topic into SQLite:', error);
+    console.error('Error inserting topic into database:', error);
     return res.status(500).json({ error: 'Failed to create topic', details: error.message });
   }
 });

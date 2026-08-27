@@ -890,6 +890,33 @@ export const migrations: Migration[] = [
       logger.info('[Migration 008] Rollback completed.');
     },
   },
+  {
+    id: '009_taxonomy_audit_logs',
+    name: 'Create taxonomy audit logs table and tracking indexes',
+    up: async (client: pg.PoolClient) => {
+      logger.info('[Migration 009] Creating taxonomy_audit_logs table...');
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS taxonomy_audit_logs (
+          id VARCHAR(255) PRIMARY KEY,
+          action VARCHAR(50) NOT NULL,
+          entity_type VARCHAR(50) NOT NULL DEFAULT 'topic',
+          entity_id VARCHAR(255) NOT NULL,
+          details JSONB NOT NULL DEFAULT '{}'::jsonb,
+          performed_by VARCHAR(255) DEFAULT 'admin',
+          created_at BIGINT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_taxonomy_audit_action ON taxonomy_audit_logs(action);
+        CREATE INDEX IF NOT EXISTS idx_taxonomy_audit_entity ON taxonomy_audit_logs(entity_type, entity_id);
+        CREATE INDEX IF NOT EXISTS idx_taxonomy_audit_created ON taxonomy_audit_logs(created_at DESC);
+      `);
+      logger.info('[Migration 009] ✅ taxonomy_audit_logs table created successfully.');
+    },
+    down: async (client: pg.PoolClient) => {
+      logger.info('[Migration 009] Rolling back taxonomy_audit_logs table...');
+      await client.query(`DROP TABLE IF EXISTS taxonomy_audit_logs CASCADE;`);
+    },
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

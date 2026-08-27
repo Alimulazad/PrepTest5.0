@@ -195,7 +195,20 @@ npm run test
 
 ---
 
-## 🐳 8. Containerization & Deployment
+## 🧪 8. Pre-Deployment Manual Test Checklist
+
+Before shipping new updates or deploying to production, execute the following 4-step verification checklist:
+
+| Test Case | Objective & Steps | Expected Result |
+| :--- | :--- | :--- |
+| **1. Re-upload Same CSV** | Import a CSV file, complete the import, then re-upload and confirm the same file. | Zero duplicate topics generated; existing topics resolved and questions safely upserted via `ON CONFLICT (id) DO UPDATE`. |
+| **2. Bengali Whitespace & Unicode Normalization** | Import questions with arbitrary spacing (e.g. `"  ভেক্টর   ডট গুণন  "`) or decomposed Unicode codepoints. | `normalizeBangla` strips ZWJ/ZWNJ and harmonizes glyphs to match the canonical topic without creating spurious duplicates. |
+| **3. Cascading Taxonomy Picker** | Select Subject (e.g. Physics 1st) ➔ Chapter (Vector) in manual edit or bulk import modals. | Only topics belonging to Vector are displayed. Creating an in-line topic (`+ নতুন টপিক তৈরি করুন`) persists to DB and immediately refreshes the picker. |
+| **4. Taxonomy Health & Transactional Merge** | Visit Admin Taxonomy Health Dashboard ➔ Duplicate Suspects ➔ Execute Topic Merge. | All MCQs and Written Questions pointing to old topics are atomically reassigned to survivor topic; audit log is written to `taxonomy_audit_logs`. |
+
+---
+
+## 🐳 9. Containerization & Deployment
 
 Run the complete full-stack environment with a single command using Docker Compose:
 

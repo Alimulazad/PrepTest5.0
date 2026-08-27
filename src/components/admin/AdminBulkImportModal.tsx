@@ -98,7 +98,7 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
   const [isCreatingMissingTopics, setIsCreatingMissingTopics] = useState<boolean>(false);
   const [autoCreateSuccessMsg, setAutoCreateSuccessMsg] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [previewFilter, setPreviewFilter] = useState<'all' | 'valid' | 'warning' | 'invalid'>('all');
+  const [previewFilter, setPreviewFilter] = useState<'all' | 'valid' | 'warning' | 'invalid' | 'missing_taxonomy'>('all');
 
   // Selected question indices for bulk topic assignment
   const [selectedQuestionIndices, setSelectedQuestionIndices] = useState<number[]>([]);
@@ -130,7 +130,7 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
     }
   };
 
-  const handleApplyTopicToQuestions = () => {
+  const handleApplyTopicToQuestions = async () => {
     let targetTopicId = '';
     let targetTopicName = '';
 
@@ -148,7 +148,25 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
         return;
       }
       targetTopicName = customTopicName.trim();
-      targetTopicId = customTopicId.trim() || customTopicName.trim().toLowerCase().replace(/\s+/g, '_');
+      targetTopicId = customTopicId.trim() || `top_${defaultChapter}_${Date.now().toString(36)}`;
+
+      // Persist to topics table immediately via API
+      try {
+        const created = await createTopic({
+          id: targetTopicId,
+          chapter_id: defaultChapter,
+          subject_id: defaultSubject,
+          name: targetTopicName,
+          bangla_name: targetTopicName,
+          star_rating: 3,
+        });
+        if (created) {
+          targetTopicId = created.id;
+          setDbTopics((prev) => (prev.some((t) => t.id === created.id) ? prev : [...prev, created]));
+        }
+      } catch (err: any) {
+        console.warn('Custom topic creation notice:', err.message);
+      }
     }
 
     // Determine target question indices
@@ -179,14 +197,14 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
           topic_name: targetTopicName,
           status: (q.status === 'invalid' && (!q.question_text || !q.options) ? 'invalid' : 'valid') as 'valid' | 'warning' | 'invalid',
           isValid: true,
-          smartMappedNote: `🎯 টপিক ম্যানুয়ালি সেট করা হয়েছে: ${targetTopicName} (${targetTopicId})`,
+          smartMappedNote: `🎯 টপিক ম্যানুয়ালি সেট ও সংরক্ষণ করা হয়েছে: ${targetTopicName} (${targetTopicId})`,
         };
       }
       return q;
     });
 
     setParsedQuestions(revalidateParsedItems(updated));
-    setAutoCreateSuccessMsg(`সফলভাবে ${targetIndices.length} টি প্রশ্নে '${targetTopicName}' [ID: ${targetTopicId}] টপিক সেট করা হয়েছে!`);
+    setAutoCreateSuccessMsg(`সফলভাবে ${targetIndices.length} টি প্রশ্নে '${targetTopicName}' [ID: ${targetTopicId}] টপিক সেট ও সেভ করা হয়েছে!`);
     setTimeout(() => setAutoCreateSuccessMsg(null), 4000);
   };
 
@@ -629,12 +647,16 @@ Ans: A
     if (previewFilter === 'valid') return parsedQuestions.filter((q) => q.status === 'valid');
     if (previewFilter === 'warning') return parsedQuestions.filter((q) => q.status === 'warning');
     if (previewFilter === 'invalid') return parsedQuestions.filter((q) => q.status === 'invalid');
+    if (previewFilter === 'missing_taxonomy') {
+      return parsedQuestions.filter((q) => !q.topic_id || !q.chapter_id || q.status === 'warning');
+    }
     return parsedQuestions;
   }, [parsedQuestions, previewFilter]);
 
   const validCount = parsedQuestions.filter((q) => q.status === 'valid').length;
   const warningCount = parsedQuestions.filter((q) => q.status === 'warning').length;
   const invalidCount = parsedQuestions.filter((q) => q.status === 'invalid').length;
+  const missingTaxonomyCount = parsedQuestions.filter((q) => !q.topic_id || !q.chapter_id || q.status === 'warning').length;
   const uploadableCount = validCount + warningCount;
 
   // 3. Final Submit to Backend Database based on Import Content Type
@@ -1207,6 +1229,17 @@ Ans: A
                   >
                     ✅ Valid ({validCount})
                   </button>
+                  {missingTaxonomyCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setPreviewFilter('missing_taxonomy')}
+                      className={`px-3 py-1.5 rounded-xl font-bold cursor-pointer transition-colors ${
+                        previewFilter === 'missing_taxonomy' ? 'bg-amber-500 text-slate-950' : 'bg-amber-950/80 text-amber-300 border border-amber-500/50 hover:bg-amber-900'
+                      }`}
+                    >
+                      ⚠️ অস্পষ্ট ট্যাক্সোনমি ({missingTaxonomyCount})
+                    </button>
+                  )}
                   {warningCount > 0 && (
                     <button
                       type="button"
@@ -1231,6 +1264,32 @@ Ans: A
                   )}
                 </div>
               </div>
+
+              {/* PRE-FLIGHT AMBIGUOUS / MISSING TAXONOMY WARNING CARD */}
+              {missingTaxonomyCount > 0 && (
+                <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 text-amber-950 space-y-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-2.5">
+                      <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <h4 className="text-xs font-bold text-amber-950">
+                          ⚠️ প্রি-ফ্লাইট সতর্কতা: {missingTaxonomyCount} টি প্রশ্নে অস্পষ্ট বা অনুপস্থিত ট্যাক্সোনমি পাওয়া গেছে
+                        </h4>
+                        <p className="text-xs text-amber-800 mt-0.5 leading-relaxed">
+                          কিছু প্রশ্নের সুনির্দিষ্ট <span className="font-bold font-mono">topic_id</span> পাওয়া যায়নি বা অস্পষ্ট রয়েছে। নিচের টপিক অ্যাসাইনার ব্যবহার করে এক ক্লিকে টপিক নির্ধারণ ও সংরক্ষণ করে নিন।
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewFilter('missing_taxonomy')}
+                      className="px-3 py-1 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shrink-0 cursor-pointer shadow-xs"
+                    >
+                      অস্পষ্ট প্রশ্ন দেখুন
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* TOPIC & TOPIC ID ASSIGNER TOOLBAR (REQUIREMENT 4) */}
               <div className="p-4 rounded-2xl bg-indigo-50/80 border border-indigo-200 space-y-3">

@@ -622,6 +622,146 @@ physics_1,পদার্থবিজ্ঞান ১ম পত্র,1st,phy1_c
 - **সুবিধা:** পূর্বে ফাইলে রাখা স্ট্যাটিক চার্টের পরিবর্তে লাইভ ডেটাবেজ থেকে রিয়েলটাইম `Subject ➔ Chapter ➔ Topic` কাঠামোর ফরম্যাটেড টেক্সট/Markdown চার্ট ও JSON ট্রি জেনারেট করে।
 - **এক্সপোর্ট ফিচার:** অ্যাডমিন ট্যাক্সোনমি হেলথ ট্যাব থেকে এক ক্লিকে লাইভ মাস্টার চার্ট কপি ও ডাউনলোড করতে পারেন।
 
+---
+
+## ১৭. ট্যাক্সোনমি অডিট লগ ও ট্রানজ্যাকশনাল ট্রেসেবিলিটি (Taxonomy Audit Log)
+
+- **ডেটাবেজ টেবিল:** `taxonomy_audit_logs` (মাইগ্রেশন `009_taxonomy_audit_logs`)
+- **স্কিমা:**
+  - `id` (UUID PRIMARY KEY)
+  - `action` (VARCHAR, যেমন: `'MERGE'`, `'NORMALIZE'`, `'DELETE'`, `'REASSIGN'`, `'CREATE'`)
+  - `entity_type` (VARCHAR, যেমন: `'topic'`, `'question'`, `'chapter'`)
+  - `entity_id` (VARCHAR, টার্গেট রেকর্ড আইডি)
+  - `details` (JSONB, মার্জ করা টপিক আইডি সমূহ, স্থানান্তরিত MCQ/Written প্রশ্নের সংখ্যা, নতুন নাম ইত্যাদি)
+  - `performed_by` (VARCHAR, অ্যাডমিন ইউজারনেম)
+  - `created_at` (BIGINT, টাইমস্ট্যাম্প)
+- **ট্যাক্সোনমি হেলথ ট্যাবে ইন্টিগ্রেশন:** অ্যাডমিন প্যানেলের "ট্যাক্সোনমি অডিট লগ" সাব-ট্যাব থেকে প্রতিটি অ্যাকশনের বিস্তারিত সময় ও পরিবর্তন ইতিহাস সহজে পর্যবেক্ষণ করা যায়।
+
+---
+
+## ১৮. প্রোডাকশন প্রি-ফ্লাইট ওয়ার্নিং ও কাস্টম টপিক পারসিস্টেন্স
+
+- **প্রি-ফ্লাইট সতর্কবার্তা:** বাল্ক ইমপোর্ট প্রিভিউতে কোনো প্রশ্নের `topic_id` অনুপস্থিত বা অস্পষ্ট থাকলে টপ বারে তাৎক্ষণিক সতর্কবার্তা ও ডেডিকেটেড ফিল্টার বাটন সক্রিয় হয়।
+- **ইনস্ট্যান্ট কাস্টম টপিক পারসিস্টেন্স:** ইমপোর্ট প্রিভিউতে "+ কাস্টম টপিক" বাটনে চাপলে তা তাৎক্ষণিক ডেটাবেজের `topics` টেবিলে সংরক্ষিত হয় ও অডিট লগে রেকর্ড যুক্ত হয়।
+
+---
+
+## ১৯. ডিপ্লয়মেন্ট পূর্ববর্তী ম্যানুয়াল টেস্টিং চেকলিস্ট (Pre-Deployment Manual Test Checklist)
+
+প্রোডাকশনে ডিপ্লয় করার পূর্বে নিচের ৪টি টেস্ট অবশ্যই যাচাই করতে হবে:
+
+1. **Test 1: Re-upload the same CSV twice → No new duplicate topics**
+   - *পদ্ধতি:* একটি CSV ফাইল আপলোড করে ইমপোর্ট সম্পন্ন করুন। এরপর একই ফাইল পুনরায় আপলোড করুন।
+   - *প্রত্যাশিত ফলাফল:* নতুন কোনো ডুপ্লিকেট টপিক তৈরি হবে না; বিদ্যমান টপিকগুলোর সাথে স্বয়ংক্রিয়ভাবে ম্যাচ করবে এবং প্রশ্নের রেকর্ডগুলো সঠিকভাবে আপসার্ট (`ON CONFLICT (id) DO UPDATE`) হবে।
+
+2. **Test 2: Bangla name with extra spaces / different Unicode form still matches**
+   - *পদ্ধতি:* একটি প্রশ্নে টপিক নামে অপ্রয়োজনীয় স্পেস (যেমন: `"  ভেক্টর   ডট গুণন  "`) অথবা ডিকম্পোজড ইউনিকোড যুক্ত করে আপলোড করুন।
+   - *প্রত্যাশিত ফলাফল:* `normalizeBangla` ফাংশন স্বয়ংক্রিয়ভাবে স্পেস ট্রিম এবং গ্লিফ নরমালাইজ করে বিদ্যমান `"ভেক্টর ডট গুণন"` টপিকের সাথেই নিখুঁতভাবে রেজলভ করবে।
+
+3. **Test 3: Cascading picker correctly filters topics by selected chapter**
+   - *পদ্ধতি:* অ্যাডমিন প্যানেলে ম্যানুয়াল প্রশ্ন এডিটর বা বাল্ক ইমপোর্ট মডালে `CascadingTaxonomyPicker` ওপেন করুন। বিষয় হিসেবে "পদার্থবিজ্ঞান ১ম পত্র" এবং অধ্যায় হিসেবে "ভেক্টর" সিলেক্ট করুন।
+   - *প্রত্যাশিত ফলাফল:* টপিক ড্রপডাউনে শুধুমাত্র "ভেক্টর" অধ্যায়ের অধীনস্থ টপিকগুলো ফিল্টার হয়ে প্রদর্শিত হবে এবং ইন-লাইন "+ নতুন টপিক তৈরি করুন" বাটনে নতুন টপিক তৈরি করলে তা সাথে সাথে সিলেক্টরে যুক্ত হবে।
+
+4. **Test 4: Taxonomy health page correctly detects duplicate topics & safe merge**
+   - *পদ্ধতি:* ট্যাক্সোনমি হেলথ ড্যাশবোর্ডে "ডুপ্লিকেট সন্দেহভাজন টপিক" ট্যাবে প্রবেশ করুন।
+   - *প্রত্যাশিত ফলাফল:* একই অধ্যায়ের অধীনে থাকা ডুপ্লিকেট টপিকসমূহ গ্রুপ আকারে প্রদর্শিত হবে। "মার্জ করুন" বাটনে ক্লিক করলে সারভাইভার টপিকে সকল MCQ ও Written প্রশ্ন নিরাপদ ট্রানজ্যাকশনে স্থানান্তরিত হবে এবং অডিট লগে এন্ট্রি যোগ হবে।
+
+---
+
+## ২০. ফাইনাল tRPC / REST রাউটার সিগনেচার স্পেসিফিকেশন (API Signatures)
+
+```typescript
+// ==========================================
+// TAXONOMY ROUTER CONTRACT SPECIFICATION
+// ==========================================
+
+export interface TaxonomyRouter {
+  // 1. Live Hierarchy & Master Chart
+  getTree: {
+    input: void;
+    output: { success: boolean; subjects: SubjectTreeItem[] };
+  };
+  getMasterChart: {
+    input: { format?: 'json' | 'markdown' };
+    output: string | { success: boolean; data: any };
+  };
+
+  // 2. Health & Diagnostics
+  getHealthSummary: {
+    input: void;
+    output: TaxonomyHealthSummary;
+  };
+  getAuditLogs: {
+    input: { limit?: number };
+    output: { success: boolean; logs: TaxonomyAuditLogItem[] };
+  };
+
+  // 3. Transactional Mutations
+  createTopic: {
+    input: {
+      chapter_id: string;
+      bangla_name: string;
+      name?: string;
+      custom_id?: string;
+      star_rating?: number;
+      created_by?: string;
+    };
+    output: { success: boolean; topic: TopicRecord; created: boolean };
+  };
+
+  mergeTopics: {
+    input: {
+      sourceTopicIds: string[];
+      targetTopicId: string;
+      targetBanglaName?: string;
+      targetName?: string;
+      performedBy?: string;
+    };
+    output: {
+      success: boolean;
+      merged_count: number;
+      target_topic_id: string;
+      reassigned_mcq_count: number;
+      reassigned_written_count: number;
+    };
+  };
+
+  normalizeTopic: {
+    input: {
+      topicId: string;
+      banglaName: string;
+      name?: string;
+      performedBy?: string;
+    };
+    output: { success: boolean; topic: TopicRecord };
+  };
+
+  deleteEmptyTopics: {
+    input: {
+      topicIds: string[];
+      performedBy?: string;
+    };
+    output: {
+      success: boolean;
+      deleted_count: number;
+      deleted_ids: string[];
+    };
+  };
+
+  reassignOrphans: {
+    input: {
+      items: Array<{
+        question_id: string;
+        question_type: 'mcq' | 'written';
+        target_topic_id: string;
+      }>;
+      performedBy?: string;
+    };
+    output: { success: boolean; reassigned_count: number };
+  };
+}
+```
+
 
 
 

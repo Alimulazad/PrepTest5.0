@@ -214,7 +214,9 @@ export async function getTaxonomyHealthService(): Promise<TaxonomyHealthSummary>
   let zeroQuestionTopics: ZeroQuestionTopicItem[] = [];
   let orphanedQuestions: OrphanedQuestionItem[] = [];
 
-  // 1. Check duplicate suspects via DB view first, and programmatic fallback
+  // 1. Check duplicate suspects via DB view first
+  const groupMap = new Map<string, DuplicateSuspectGroup>();
+
   try {
     const dupRes = await query('SELECT * FROM duplicate_suspect_topics');
     if (dupRes && dupRes.rows && dupRes.rows.length > 0) {
@@ -247,8 +249,9 @@ export async function getTaxonomyHealthService(): Promise<TaxonomyHealthSummary>
           detailedTopics[0].is_suggested_survivor = true;
         }
 
-        duplicateGroups.push({
-          group_id: `dup_${row.chapter_id}_${normalizeBanglaKey(row.bangla_name)}`,
+        const groupId = `dup_${row.chapter_id}_${normalizeBanglaKey(row.bangla_name)}`;
+        groupMap.set(groupId, {
+          group_id: groupId,
           chapter_id: row.chapter_id,
           chapter_name: chap?.bangla_name || chap?.name || row.chapter_id,
           subject_id: chap?.subject_id || '',
@@ -264,27 +267,28 @@ export async function getTaxonomyHealthService(): Promise<TaxonomyHealthSummary>
     logger.warn(`[TaxonomyHealth] duplicate_suspect_topics view query failed: ${err.message}`);
   }
 
-  // Programmatic duplicate check to catch subtle acoustic / Unicode normalization matches
-  if (duplicateGroups.length === 0) {
-    const chapterTopicsMap = new Map<string, TopicRecord[]>();
-    for (const t of topics) {
-      const list = chapterTopicsMap.get(t.chapter_id) || [];
-      list.push(t as any);
-      chapterTopicsMap.set(t.chapter_id, list);
+  // Programmatic duplicate check across all topics to catch subtle acoustic / Unicode normalization matches
+  const chapterTopicsMap = new Map<string, TopicRecord[]>();
+  for (const t of topics) {
+    const list = chapterTopicsMap.get(t.chapter_id) || [];
+    list.push(t as any);
+    chapterTopicsMap.set(t.chapter_id, list);
+  }
+
+  chapterTopicsMap.forEach((tList, chapId) => {
+    const groupedByNorm = new Map<string, TopicRecord[]>();
+    for (const t of tList) {
+      const normKey = normalizeBanglaKey(t.bangla_name || t.name);
+      if (!normKey) continue;
+      const g = groupedByNorm.get(normKey) || [];
+      g.push(t);
+      groupedByNorm.set(normKey, g);
     }
 
-    chapterTopicsMap.forEach((tList, chapId) => {
-      const groupedByNorm = new Map<string, TopicRecord[]>();
-      for (const t of tList) {
-        const normKey = normalizeBanglaKey(t.bangla_name || t.name);
-        if (!normKey) continue;
-        const g = groupedByNorm.get(normKey) || [];
-        g.push(t);
-        groupedByNorm.set(normKey, g);
-      }
-
-      groupedByNorm.forEach((g, normKey) => {
-        if (g.length > 1) {
+    groupedByNorm.forEach((g, normKey) => {
+      if (g.length > 1) {
+        const groupId = `dup_${chapId}_${normKey}`;
+        if (!groupMap.has(groupId)) {
           const chap = chapMap.get(chapId);
           const sub = chap ? subMap.get(chap.subject_id) : undefined;
           const mappedTopics = g.map((t) => ({
@@ -304,8 +308,8 @@ export async function getTaxonomyHealthService(): Promise<TaxonomyHealthSummary>
           });
           mappedTopics[0].is_suggested_survivor = true;
 
-          duplicateGroups.push({
-            group_id: `dup_${chapId}_${normKey}`,
+          groupMap.set(groupId, {
+            group_id: groupId,
             chapter_id: chapId,
             chapter_name: chap?.bangla_name || chap?.name || chapId,
             subject_id: chap?.subject_id || '',
@@ -316,9 +320,11 @@ export async function getTaxonomyHealthService(): Promise<TaxonomyHealthSummary>
             total_combined_questions: mappedTopics.reduce((acc, t) => acc + t.total_questions, 0),
           });
         }
-      });
+      }
     });
-  }
+  });
+
+  duplicateGroups = Array.from(groupMap.values());
 
   // 2. Check Zero Question Topics
   try {
@@ -490,6 +496,31 @@ export async function mergeTopicsService(params: {
         [targetTopic.chapter_id]
       );
 
+      // 7. Insert Audit Log
+      try {
+        const logId = `audit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        await client.query(
+          `INSERT INTO taxonomy_audit_logs (id, action, entity_type, entity_id, details, performed_by, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            logId,
+            'MERGE',
+            'topic',
+            targetTopicId,
+            JSON.stringify({
+              survivor_id: targetTopicId,
+              survivor_name: effectiveName,
+              survivor_bangla_name: effectiveBanglaName,
+              source_ids: effectiveSources,
+              reassigned_mcqs: reassignedMcqCount,
+              reassigned_written: reassignedWrittenCount,
+            }),
+            'admin',
+            Date.now(),
+          ]
+        );
+      } catch (logErr) {}
+
       await client.query('COMMIT');
 
       // Update in-memory cache if active
@@ -502,6 +533,23 @@ export async function mergeTopicsService(params: {
           existing.bangla_name = effectiveBanglaName;
           existing.name = effectiveName;
           existing.total_questions = (existing.total_questions || 0) + reassignedMcqCount + reassignedWrittenCount;
+        }
+      }
+
+      if (memoryStore && memoryStore.questions) {
+        for (const [, q] of memoryStore.questions) {
+          if (effectiveSources.includes(q.topic_id || '')) {
+            q.topic_id = targetTopicId;
+            q.topic_name = effectiveBanglaName;
+          }
+        }
+      }
+      if (memoryStore && memoryStore.writtenQuestions) {
+        for (const [, w] of memoryStore.writtenQuestions) {
+          if (effectiveSources.includes(w.topic_id || '')) {
+            w.topic_id = targetTopicId;
+            w.topic_name = effectiveBanglaName;
+          }
         }
       }
 
@@ -583,7 +631,36 @@ export async function normalizeTopicService(params: {
       await client.query(`UPDATE questions SET topic_name = $1 WHERE topic_id = $2`, [normalizedBangla, topicId]);
       await client.query(`UPDATE written_questions SET topic_name = $1 WHERE topic_id = $2`, [normalizedBangla, topicId]);
 
+      // Record audit log
+      try {
+        const logId = `audit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        await client.query(
+          `INSERT INTO taxonomy_audit_logs (id, action, entity_type, entity_id, details, performed_by, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            logId,
+            'NORMALIZE',
+            'topic',
+            topicId,
+            JSON.stringify({
+              new_bangla_name: normalizedBangla,
+              new_name: normalizedEnglish,
+            }),
+            'admin',
+            Date.now(),
+          ]
+        );
+      } catch (logErr) {}
+
       await client.query('COMMIT');
+
+      if (memoryStore && memoryStore.topics) {
+        const memTopic = memoryStore.topics.get(topicId);
+        if (memTopic) {
+          memTopic.bangla_name = normalizedBangla;
+          memTopic.name = normalizedEnglish;
+        }
+      }
 
       const row = res.rows[0];
       return {
@@ -655,6 +732,10 @@ export async function deleteEmptyTopicsService(topicIds: string[]): Promise<{
         throw new Error('None of the selected topics are empty (they have active questions assigned)');
       }
 
+      // Safeguard: nullify any residual question references
+      await client.query('UPDATE questions SET topic_id = NULL, topic_name = NULL WHERE topic_id = ANY($1)', [safeToDelete]);
+      await client.query('UPDATE written_questions SET topic_id = NULL, topic_name = NULL WHERE topic_id = ANY($1)', [safeToDelete]);
+
       await client.query('DELETE FROM topics WHERE id = ANY($1)', [safeToDelete]);
 
       // Recalculate chapters total_topics
@@ -662,6 +743,24 @@ export async function deleteEmptyTopicsService(topicIds: string[]): Promise<{
         UPDATE chapters c
         SET total_topics = (SELECT COUNT(*) FROM topics t WHERE t.chapter_id = c.id)
       `);
+
+      // Record audit log
+      try {
+        const logId = `audit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        await client.query(
+          `INSERT INTO taxonomy_audit_logs (id, action, entity_type, entity_id, details, performed_by, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            logId,
+            'DELETE',
+            'topic',
+            safeToDelete.join(','),
+            JSON.stringify({ deleted_topic_ids: safeToDelete, count: safeToDelete.length }),
+            'admin',
+            Date.now(),
+          ]
+        );
+      } catch (logErr) {}
 
       await client.query('COMMIT');
 
@@ -755,6 +854,24 @@ export async function reassignOrphanQuestionsService(items: Array<{
           total_questions = (SELECT COUNT(*) FROM questions q WHERE q.topic_id = t.id) + (SELECT COUNT(*) FROM written_questions w WHERE w.topic_id = t.id)
       `);
 
+      // Record audit log
+      try {
+        const logId = `audit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        await client.query(
+          `INSERT INTO taxonomy_audit_logs (id, action, entity_type, entity_id, details, performed_by, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            logId,
+            'REASSIGN',
+            'topic',
+            items[0]?.target_topic_id || 'batch',
+            JSON.stringify({ reassigned_count: count, items }),
+            'admin',
+            Date.now(),
+          ]
+        );
+      } catch (logErr) {}
+
       await client.query('COMMIT');
 
       return {
@@ -770,6 +887,148 @@ export async function reassignOrphanQuestionsService(items: Array<{
   } else {
     return { success: true, reassigned_count: items.length };
   }
+}
+
+// ==========================================
+// 8. CREATE TOPIC TRANSACTIONAL SERVICE
+// ==========================================
+
+export async function createTopicService(topicData: Partial<TopicRecord>, performedBy: string = 'admin'): Promise<TopicRecord> {
+  const normBangla = normalizeBangla(topicData.bangla_name || topicData.name || 'নতুন টপিক');
+  const normName = (topicData.name || normBangla).trim();
+  const chapId = topicData.chapter_id || 'phy1_ch1';
+  const topicId = topicData.id || generateTopicId(chapId, topicData.topic_code, normBangla);
+
+  const client = (query as any).getClient ? await (query as any).getClient() : null;
+
+  if (client) {
+    try {
+      await client.query('BEGIN');
+      const insertRes = await client.query(
+        `INSERT INTO topics (
+          id, chapter_id, subject_id, paper, topic_code, name, bangla_name,
+          star_rating, total_questions, completed_questions, mcq_count, written_count, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, 0, 0, 0, $9)
+        ON CONFLICT (id) DO UPDATE SET
+          name = EXCLUDED.name,
+          bangla_name = EXCLUDED.bangla_name,
+          chapter_id = EXCLUDED.chapter_id,
+          subject_id = EXCLUDED.subject_id,
+          paper = EXCLUDED.paper,
+          topic_code = COALESCE(EXCLUDED.topic_code, topics.topic_code)
+        RETURNING *`,
+        [
+          topicId,
+          chapId,
+          topicData.subject_id || null,
+          topicData.paper || null,
+          topicData.topic_code || null,
+          normName,
+          normBangla,
+          topicData.star_rating || 3,
+          Date.now(),
+        ]
+      );
+
+      // Recalculate chapter total_topics
+      await client.query(
+        'UPDATE chapters SET total_topics = (SELECT COUNT(*) FROM topics WHERE chapter_id = $1) WHERE id = $1',
+        [chapId]
+      );
+
+      // Log audit
+      try {
+        const logId = `audit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        await client.query(
+          `INSERT INTO taxonomy_audit_logs (id, action, entity_type, entity_id, details, performed_by, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            logId,
+            'CREATE',
+            'topic',
+            topicId,
+            JSON.stringify({ id: topicId, name: normName, bangla_name: normBangla, chapter_id: chapId }),
+            performedBy,
+            Date.now(),
+          ]
+        );
+      } catch (err) {}
+
+      await client.query('COMMIT');
+
+      const row = insertRes.rows[0];
+      const created: TopicRecord = {
+        id: row.id,
+        chapter_id: row.chapter_id,
+        subject_id: row.subject_id,
+        paper: row.paper,
+        topic_code: row.topic_code,
+        name: row.name,
+        bangla_name: row.bangla_name,
+        star_rating: row.star_rating || 3,
+        total_questions: Number(row.total_questions) || 0,
+      };
+
+      if (memoryStore && memoryStore.topics) {
+        memoryStore.topics.set(created.id, created);
+      }
+
+      return created;
+    } catch (e: any) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  } else {
+    const created: TopicRecord = {
+      id: topicId,
+      chapter_id: chapId,
+      subject_id: topicData.subject_id,
+      paper: topicData.paper,
+      topic_code: topicData.topic_code,
+      name: normName,
+      bangla_name: normBangla,
+      star_rating: topicData.star_rating || 3,
+      total_questions: 0,
+    };
+    if (memoryStore && memoryStore.topics) {
+      memoryStore.topics.set(created.id, created);
+    }
+    return created;
+  }
+}
+
+// ==========================================
+// 9. GET TAXONOMY AUDIT LOGS SERVICE
+// ==========================================
+
+export async function getTaxonomyAuditLogsService(limit: number = 50): Promise<Array<{
+  id: string;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  details: any;
+  performed_by: string;
+  created_at: number;
+}>> {
+  try {
+    const res = await query('SELECT * FROM taxonomy_audit_logs ORDER BY created_at DESC LIMIT $1', [limit]);
+    if (res && res.rows) {
+      return res.rows.map((r: any) => ({
+        id: r.id,
+        action: r.action,
+        entity_type: r.entity_type,
+        entity_id: r.entity_id,
+        details: typeof r.details === 'string' ? JSON.parse(r.details) : r.details,
+        performed_by: r.performed_by || 'admin',
+        created_at: Number(r.created_at) || Date.now(),
+      }));
+    }
+  } catch (err: any) {
+    logger.warn(`[TaxonomyAudit] Fetch audit logs failed: ${err.message}`);
+  }
+  return [];
 }
 
 // ==========================================

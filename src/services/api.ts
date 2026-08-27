@@ -1197,6 +1197,27 @@ export async function reassignOrphanQuestionsApi(items: Array<{
   return await response.json();
 }
 
+export interface TaxonomyAuditLogItem {
+  id: string;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  details: any;
+  performed_by: string;
+  created_at: number;
+}
+
+export async function fetchTaxonomyAuditLogsApi(limit: number = 50): Promise<TaxonomyAuditLogItem[]> {
+  const response = await fetchWithRetry(getApiUrl(`/api/admin/taxonomy/audit-logs?limit=${limit}`), {
+    headers: getAdminAuthHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to fetch taxonomy audit logs');
+  }
+  const data = await response.json();
+  return data.logs || [];
+}
+
 export async function fetchMasterChartApi(format: 'json' | 'markdown' = 'markdown'): Promise<string | any> {
   const response = await fetchWithRetry(getApiUrl(`/api/admin/taxonomy/master-chart?format=${format}`), {
     headers: getAdminAuthHeaders(),

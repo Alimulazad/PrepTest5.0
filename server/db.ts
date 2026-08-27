@@ -781,10 +781,92 @@ export async function updateTopicInDb(id: string, t: Partial<TopicRecord>): Prom
   return updated;
 }
 
-export async function deleteTopicFromDb(id: string): Promise<boolean> {
-  memoryStore.topics.delete(id);
-  await query('DELETE FROM topics WHERE id = $1', [id]);
-  return true;
+export async function deleteTopicFromDb(id: string, performedBy: string = 'admin'): Promise<boolean> {
+  const activePool = getPgPool();
+  if (isPostgresActive() && activePool) {
+    const client = await activePool.connect();
+    try {
+      await client.query('BEGIN');
+      const topRes = await client.query('SELECT * FROM topics WHERE id = $1', [id]);
+      const topic = topRes.rows[0];
+
+      // Update all questions that pointed to this topic
+      await client.query('UPDATE questions SET topic_id = NULL, topic_name = NULL WHERE topic_id = $1', [id]);
+      await client.query('UPDATE written_questions SET topic_id = NULL, topic_name = NULL WHERE topic_id = $1', [id]);
+
+      // Delete topic
+      const res = await client.query('DELETE FROM topics WHERE id = $1', [id]);
+
+      // Recalculate chapter total_topics
+      if (topic?.chapter_id) {
+        await client.query(
+          'UPDATE chapters SET total_topics = (SELECT COUNT(*) FROM topics WHERE chapter_id = $1) WHERE id = $1',
+          [topic.chapter_id]
+        );
+      }
+
+      // Record audit log
+      try {
+        const logId = `audit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        await client.query(
+          `INSERT INTO taxonomy_audit_logs (id, action, entity_type, entity_id, details, performed_by, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            logId,
+            'DELETE',
+            'topic',
+            id,
+            JSON.stringify({ topic_name: topic?.name, bangla_name: topic?.bangla_name, chapter_id: topic?.chapter_id }),
+            performedBy,
+            Date.now(),
+          ]
+        );
+      } catch (logErr) {
+        // Audit log table might be initializing
+      }
+
+      await client.query('COMMIT');
+
+      memoryStore.topics.delete(id);
+      for (const [, q] of memoryStore.questions) {
+        if (q.topic_id === id) {
+          q.topic_id = undefined;
+          q.topic_name = undefined;
+        }
+      }
+      for (const [, w] of memoryStore.writtenQuestions) {
+        if (w.topic_id === id) {
+          w.topic_id = undefined;
+          w.topic_name = undefined;
+        }
+      }
+
+      return (res.rowCount || 0) > 0;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  } else {
+    memoryStore.topics.delete(id);
+    for (const [, q] of memoryStore.questions) {
+      if (q.topic_id === id) {
+        q.topic_id = undefined;
+        q.topic_name = undefined;
+      }
+    }
+    for (const [, w] of memoryStore.writtenQuestions) {
+      if (w.topic_id === id) {
+        w.topic_id = undefined;
+        w.topic_name = undefined;
+      }
+    }
+    await query('UPDATE questions SET topic_id = NULL, topic_name = NULL WHERE topic_id = $1', [id]);
+    await query('UPDATE written_questions SET topic_id = NULL, topic_name = NULL WHERE topic_id = $1', [id]);
+    await query('DELETE FROM topics WHERE id = $1', [id]);
+    return true;
+  }
 }
 
 // ---------------- 4-LAYER COUNTER & HEAL SYSTEM ----------------
