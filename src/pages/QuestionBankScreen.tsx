@@ -193,6 +193,56 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
       });
   }, []);
 
+  const [dynamicTopics, setDynamicTopics] = useState<any[]>([]);
+  const [isLoadingTopics, setIsLoadingTopics] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (selectedChapter && selectedChapter !== 'all') {
+      setIsLoadingTopics(true);
+      fetch(`/api/topics?chapter_id=${selectedChapter.id}`)
+        .then((res) => (res.ok ? res.json() : []))
+        .then((data) => {
+          if (Array.isArray(data)) {
+            setDynamicTopics(data);
+          } else {
+            setDynamicTopics([]);
+          }
+          setIsLoadingTopics(false);
+        })
+        .catch((err) => {
+          console.error('Error fetching dynamic topics:', err);
+          setDynamicTopics([]);
+          setIsLoadingTopics(false);
+        });
+    } else {
+      setDynamicTopics([]);
+    }
+  }, [selectedChapter]);
+
+  const combinedSubtopics = useMemo(() => {
+    if (!selectedChapter || selectedChapter === 'all') return [];
+    
+    const staticSubtopics = selectedChapter.subtopics || [];
+    const topicMap = new Map<string, { id: string; topic_code?: string; name: string; bangla_name: string }>();
+
+    // Add static first
+    staticSubtopics.forEach((st) => {
+      topicMap.set(st.id, st);
+    });
+
+    // Add/Overwrite with dynamic from database
+    dynamicTopics.forEach((dt) => {
+      topicMap.set(dt.id, {
+        id: dt.id,
+        topic_code: dt.topic_code,
+        name: dt.name,
+        bangla_name: dt.bangla_name || dt.name,
+      });
+    });
+
+    return Array.from(topicMap.values());
+  }, [selectedChapter, dynamicTopics]);
+
   const allWrittenQuestions = useMemo(() => {
     return propWrittenQuestions && propWrittenQuestions.length > 0
       ? propWrittenQuestions
@@ -730,7 +780,7 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
                 </button>
 
                 {/* Subtopic Chips for Selected Chapter */}
-                {(selectedChapter.subtopics || []).map((st) => {
+                {combinedSubtopics.map((st) => {
                   const isSelected = selectedTopicId === st.id;
                   const count = getTopicCount(st.id, selectedCategory);
 
