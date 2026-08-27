@@ -18,6 +18,7 @@ import {
   TaxonomyTreeNode,
 } from '../../packages/shared/src/taxonomy/resolve.js';
 import { logger } from '../utils/logger.js';
+import { validateTaxonomyConsistency } from '../validation/taxonomyConsistency.js';
 
 // ==========================================
 // INTERFACES & SCHEMAS
@@ -354,7 +355,28 @@ export async function resolveQuestionsImport(
 
     const resolvedTopic = topicRes.matched;
 
-    // --- STEP 4: CHECK FOR AMBIGUITIES & MISMATCHES ---
+    // --- STEP 4: CHECK REFERENTIAL INTEGRITY & CONSISTENCY ---
+    const consistency = validateTaxonomyConsistency(
+      {
+        subject_id: resolvedSubject?.id || rawSubId,
+        chapter_id: resolvedChapter?.id || rawChapId,
+        topic_id: rawTopicId,
+        topic_name: rawTopicName,
+      },
+      { subjects, chapters, topics }
+    );
+
+    let effectiveTopicId = resolvedTopic ? resolvedTopic.id : (rawTopicId || null);
+    let effectiveTopicName = resolvedTopic ? (resolvedTopic.bangla_name || resolvedTopic.name) : (rawTopicName || null);
+
+    if (consistency.isSoftMismatch && consistency.mismatchType === 'topic_chapter_mismatch') {
+      notes.push(consistency.reason || 'Topic-Chapter Mismatch detected');
+      if (consistency.resolvedTopicId !== undefined) {
+        effectiveTopicId = consistency.resolvedTopicId;
+        effectiveTopicName = consistency.resolvedTopicName || effectiveTopicName;
+      }
+    }
+
     // Critical Rule: If a row has topic_id but the name doesn't match the DB topic name -> treat as ambiguous!
     let hasTopicNameConflict = false;
     let conflictReason = '';
@@ -372,7 +394,21 @@ export async function resolveQuestionsImport(
     }
 
     // Determine category
-    if (hasTopicNameConflict) {
+    if (consistency.isHardMismatch) {
+      missingTaxonomyRows.push({
+        rowIndex: idx,
+        originalData: raw,
+        missingFields: [consistency.mismatchType === 'subject_invalid' ? 'subject' : 'chapter'],
+        reason: consistency.reason || 'ট্যাক্সোনমিতে অসামঞ্জস্যতা পাওয়া গেছে।',
+        suggestedDefaults: {
+          subject_id: resolvedSubject?.id || rawSubId || 'physics_1',
+          subject_name: resolvedSubject?.bangla_name || resolvedSubject?.name || rawSubName || 'পদার্থবিজ্ঞান',
+          paper: (resolvedSubject?.paper as '1st' | '2nd') || '1st',
+          chapter_id: resolvedChapter?.id || rawChapId || 'phy1_ch1',
+          chapter_name: resolvedChapter?.bangla_name || resolvedChapter?.name || rawChapName || 'অধ্যায়',
+        },
+      });
+    } else if (hasTopicNameConflict) {
       ambiguousRows.push({
         rowIndex: idx,
         originalData: raw,
@@ -395,8 +431,8 @@ export async function resolveQuestionsImport(
           paper: (resolvedSubject?.paper as '1st' | '2nd') || '1st',
           chapter_id: resolvedChapter?.id || effectiveChapId || 'phy1_ch1',
           chapter_name: resolvedChapter?.bangla_name || resolvedChapter?.name || rawChapName || 'অধ্যায়',
-          topic_id: resolvedTopic ? resolvedTopic.id : null,
-          topic_name: resolvedTopic ? resolvedTopic.bangla_name || resolvedTopic.name : rawTopicName || null,
+          topic_id: effectiveTopicId,
+          topic_name: effectiveTopicName,
         },
       });
     } else if (
@@ -433,8 +469,8 @@ export async function resolveQuestionsImport(
           paper: (resolvedSubject?.paper as '1st' | '2nd') || '1st',
           chapter_id: resolvedChapter?.id || effectiveChapId || 'phy1_ch1',
           chapter_name: resolvedChapter?.bangla_name || resolvedChapter?.name || rawChapName || 'অধ্যায়',
-          topic_id: resolvedTopic ? resolvedTopic.id : null,
-          topic_name: resolvedTopic ? resolvedTopic.bangla_name || resolvedTopic.name : rawTopicName || null,
+          topic_id: effectiveTopicId,
+          topic_name: effectiveTopicName,
         },
       });
     } else if (!resolvedSubject || !resolvedChapter || (rawTopicName && !resolvedTopic && !rawTopicId)) {
@@ -474,8 +510,6 @@ export async function resolveQuestionsImport(
       const paperFinal = (resolvedSubject.paper as '1st' | '2nd') || '1st';
       const chapFinalId = resolvedChapter.id;
       const chapFinalName = resolvedChapter.bangla_name || resolvedChapter.name;
-      const topicFinalId = resolvedTopic ? resolvedTopic.id : (rawTopicId || null);
-      const topicFinalName = resolvedTopic ? (resolvedTopic.bangla_name || resolvedTopic.name) : (rawTopicName || null);
 
       if (topicRes.confidence === 'exact_id') notes.push('টপিক আইডি নিখুঁতভাবে মিলেছে');
       if (topicRes.confidence === 'exact_name') notes.push('টপিক নাম দ্বারা স্বয়ংক্রিয়ভাবে শনাক্ত হয়েছে');
@@ -489,13 +523,13 @@ export async function resolveQuestionsImport(
           paper: paperFinal,
           chapter_id: chapFinalId,
           chapter_name: chapFinalName,
-          topic_id: topicFinalId,
-          topic_name: topicFinalName,
+          topic_id: effectiveTopicId,
+          topic_name: effectiveTopicName,
         },
         matchedEntityIds: {
           subject_id: subFinalId,
           chapter_id: chapFinalId,
-          topic_id: topicFinalId,
+          topic_id: effectiveTopicId,
         },
         resolutionNotes: notes,
       });

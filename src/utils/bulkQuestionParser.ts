@@ -144,6 +144,9 @@ export function smartMapTopicByName(
   smartMapped: boolean;
   smartMappedNote: string | null;
   isInvalidId: boolean;
+  isChapterMismatch: boolean;
+  mismatchNote: string | null;
+  actualParentChapterId: string | null;
 } {
   const cleanId = topicIdInput?.trim();
   const cleanName = topicNameInput?.trim();
@@ -155,21 +158,71 @@ export function smartMapTopicByName(
       smartMapped: false,
       smartMappedNote: null,
       isInvalidId: false,
+      isChapterMismatch: false,
+      mismatchNote: null,
+      actualParentChapterId: null,
     };
   }
 
-  // 1. Direct ID match check
+  // 1. Direct ID match & Chapter Referential Consistency check
   if (cleanId) {
     const directMatch = validTopics.find(
       (t) => t.id === cleanId || t.id.toLowerCase() === cleanId.toLowerCase()
     );
+
     if (directMatch) {
+      // Check if topic's parent chapter matches the row's chapter_id
+      const parentChap = directMatch.chapter_id;
+      if (chapterIdInput && parentChap && parentChap.toLowerCase() !== chapterIdInput.toLowerCase()) {
+        // SOFT MISMATCH: topic_id exists, but belongs to a different chapter!
+        const mismatchReason = `CSV-তে topic_id '${cleanId}' দেওয়া আছে কিন্তু chapter_id '${chapterIdInput}'-এ, প্রকৃতপক্ষে এই topic '${parentChap}'-এর অধীনে।`;
+
+        // Try silently re-resolving topic within chapterIdInput using cleanName
+        let reResolved: typeof directMatch | undefined = undefined;
+        if (cleanName) {
+          const normName = cleanName.toLowerCase().replace(/[\s\-_,\.\:\(\)\[\]]+/g, '');
+          reResolved = validTopics.find((t) => {
+            if (t.chapter_id?.toLowerCase() !== chapterIdInput.toLowerCase()) return false;
+            const tName = (t.name || t.bangla_name || '').toLowerCase().replace(/[\s\-_,\.\:\(\)\[\]]+/g, '');
+            return tName.length > 0 && (tName === normName || tName.includes(normName) || normName.includes(tName));
+          });
+        }
+
+        if (reResolved) {
+          return {
+            matchedTopicId: reResolved.id,
+            matchedTopicName: reResolved.bangla_name || reResolved.name || reResolved.id,
+            smartMapped: true,
+            smartMappedNote: `⚡ ${mismatchReason} স্বয়ংক্রিয়ভাবে অধ্যায় '${chapterIdInput}'-এর অধীনস্থ টপিক '${reResolved.id}' দিয়ে রি-রেজোলভ করা হয়েছে।`,
+            isInvalidId: false,
+            isChapterMismatch: true,
+            mismatchNote: `⚠️ Topic-Chapter Mismatch: CSV-তে topic_id '${cleanId}' দেওয়া আছে কিন্তু chapter_id '${chapterIdInput}'-এ, প্রকৃতপক্ষে এই topic '${parentChap}'-এর অধীনে।`,
+            actualParentChapterId: parentChap,
+          };
+        } else {
+          return {
+            matchedTopicId: null,
+            matchedTopicName: cleanName || null,
+            smartMapped: false,
+            smartMappedNote: `⚠️ ${mismatchReason} অধ্যায় '${chapterIdInput}'-এ '${cleanName || cleanId}' টপিক না থাকায় topic_id খালি রাখা হলো।`,
+            isInvalidId: false,
+            isChapterMismatch: true,
+            mismatchNote: `⚠️ Topic-Chapter Mismatch: CSV-তে topic_id '${cleanId}' দেওয়া আছে কিন্তু chapter_id '${chapterIdInput}'-এ, প্রকৃতপক্ষে এই topic '${parentChap}'-এর অধীনে।`,
+            actualParentChapterId: parentChap,
+          };
+        }
+      }
+
+      // Exact valid match under the same chapter
       return {
         matchedTopicId: directMatch.id,
         matchedTopicName: directMatch.name || directMatch.bangla_name || cleanName || null,
         smartMapped: false,
         smartMappedNote: null,
         isInvalidId: false,
+        isChapterMismatch: false,
+        mismatchNote: null,
+        actualParentChapterId: null,
       };
     }
   }
@@ -181,7 +234,7 @@ export function smartMapTopicByName(
     // Search among valid topics for chapter/subject first
     let candidate = validTopics.find((t) => {
       const tName = (t.name || t.bangla_name || '').toLowerCase().replace(/[\s\-_,\.\:\(\)\[\]]+/g, '');
-      const chapterMatch = !chapterIdInput || t.chapter_id === chapterIdInput;
+      const chapterMatch = !chapterIdInput || t.chapter_id?.toLowerCase() === chapterIdInput.toLowerCase();
       return (
         chapterMatch &&
         tName.length > 0 &&
@@ -211,6 +264,9 @@ export function smartMapTopicByName(
         smartMapped: true,
         smartMappedNote: `✨ '${cleanName}' থেকে স্বয়ংক্রিয়ভাবে '${candidate.id}' আইডি ম্যাপ করা হয়েছে`,
         isInvalidId: false,
+        isChapterMismatch: false,
+        mismatchNote: null,
+        actualParentChapterId: null,
       };
     }
   }
@@ -223,6 +279,9 @@ export function smartMapTopicByName(
     smartMapped: false,
     smartMappedNote: null,
     isInvalidId: isInvalidId,
+    isChapterMismatch: false,
+    mismatchNote: null,
+    actualParentChapterId: null,
   };
 }
 
@@ -289,8 +348,15 @@ export function validateAndEnrichQuestion(
   let smartMapped = mapResult.smartMapped;
   let smartMappedNote = mapResult.smartMappedNote;
 
-  if (mapResult.isInvalidId && topicIdRaw) {
+  if (mapResult.isChapterMismatch && mapResult.mismatchNote) {
+    warnings.push(mapResult.mismatchNote);
+  } else if (mapResult.isInvalidId && topicIdRaw) {
     smartMappedNote = `⚡ কাস্টম/অনুপস্থিত টপিক ID '${topicIdRaw}' (ইমপোর্টের সময় স্বয়ংক্রিয়ভাবে তৈরি হবে)`;
+  }
+
+  // Requirement 4: If topic is missing or unresolved, flag as warning ("⚠️ Needs Topic"), NOT valid!
+  if (!finalTopicId) {
+    warnings.push('⚠️ Needs Topic (টপিক অপরিবর্তিত/অনুপস্থিত)');
   }
 
   let status: 'valid' | 'warning' | 'invalid' = 'valid';

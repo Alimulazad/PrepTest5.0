@@ -62,6 +62,11 @@ jachai/
 
 ### 📥 Smart Data Import System 3.0
 - **3-Phase Lifecycle**: `Parse` (CSV/Excel/JSON) ➔ `Resolve / Multi-Tier Preview` ➔ `Transactional Commit`.
+- **Taxonomy Referential Consistency Engine (`server/validation/taxonomyConsistency.ts`)**: Enforces 3-level hierarchical validation (`Subject ➔ Chapter ➔ Topic`). Verifies that `subject_id` exists, `chapter.subject_id === row.subject_id`, and `topic.chapter_id === row.chapter_id`.
+- **Hard & Soft Mismatch Resolution**:
+  - *Hard Mismatch*: Invalid or missing `subject_id` or `chapter_id` flags row as invalid/missing taxonomy requiring parent assignment.
+  - *Soft Mismatch (Topic-Chapter Mismatch)*: If a valid `topic_id` belongs to a different chapter than `row.chapter_id`, the engine silently drops the mismatched ID, attempts re-resolution using `topic_name` under `row.chapter_id`, or sets `topic_id: null` ("Needs Topic") so valid questions are never rejected.
+- **Pre-Flight Preview Table & Warning Badge Integrity**: Displays explicit `⚠️ Topic-Chapter Mismatch` warnings with exact parent chapter notes and fixes the preview bug by flagging unassigned topic rows with `status: 'warning'` ("⚠️ Needs Topic") rather than falsely marking them as valid.
 - **Unicode & Whitespace Normalization**: Strips zero-width characters (`ZWJ`, `ZWNJ`, `BOM`) and normalizes Bangla glyphs via `packages/shared/src/taxonomy/resolve.ts`.
 - **Pre-Flight Warning Engine**: Highlights missing/unassigned taxonomy rows in the preview header with dedicated filter buttons (`Missing Taxonomy`).
 - **Instant Custom Topic Persistence**: Inline creation of custom topics directly saves to PostgreSQL `topics` table and records entry in `taxonomy_audit_logs`.

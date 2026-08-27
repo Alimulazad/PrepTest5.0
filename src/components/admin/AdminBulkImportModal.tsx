@@ -306,8 +306,15 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
       const warnings: string[] = [];
 
       let smartMappedNote = mapRes.smartMappedNote || q.smartMappedNote;
-      if (mapRes.isInvalidId && topicIdInput) {
+      if (mapRes.isChapterMismatch && mapRes.mismatchNote) {
+        warnings.push(mapRes.mismatchNote);
+      } else if (mapRes.isInvalidId && topicIdInput) {
         smartMappedNote = `⚡ কাস্টম/অনুপস্থিত টপিক ID '${topicIdInput}' (ইমপোর্টের সময় স্বয়ংক্রিয়ভাবে তৈরি হবে)`;
+      }
+
+      // Flag rows missing a topic as warning ("⚠️ Needs Topic")
+      if (!finalTopicId) {
+        warnings.push('⚠️ Needs Topic (টপিক অপরিবর্তিত/অনুপস্থিত)');
       }
 
       let status: 'valid' | 'warning' | 'invalid' = 'valid';
@@ -326,7 +333,7 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
         isWarning: status === 'warning',
         warningIssues: warnings,
         smartMapped: mapRes.smartMapped,
-        smartMappedNote: mapRes.smartMappedNote || undefined,
+        smartMappedNote: smartMappedNote || undefined,
       };
     });
   };
