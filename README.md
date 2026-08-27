@@ -21,48 +21,70 @@
 ```
 jachai/
 ├── apps/
-│   ├── web/               # Public student-facing portal (React 19, Tailwind, Vite)
+│   ├── web/               # Public student-facing portal (React 19, Tailwind CSS, Vite)
 │   ├── admin/             # Dedicated administrator dashboard & CMS (React 19, Vite)
 │   └── api/               # Express backend service, authentication, and AI proxy
-├── packages/
-│   └── shared/            # Shared TypeScript types, schemas, and admission metadata
+├── src/
+│   ├── components/        # Student & Admin UI components (CascadingTaxonomyPicker, AdminTaxonomyHealthTab)
+│   ├── services/          # Frontend API integration & Taxonomy Services
+│   └── utils/             # Centralized Question Filter Engine (questionFilter.ts) & LaTeX renderers
 ├── server/                # Server core modules, database connectors, and migrations
-│   ├── db.ts              # PostgreSQL driver with in-memory fallback & transaction handling
-│   ├── migrations.ts      # Versioned migration engine (_migrations table tracker)
-│   ├── validation/        # Zod input validation schemas
+│   ├── db.ts              # PostgreSQL driver with pool connection & transaction handling
+│   ├── migrations.ts      # Versioned migration engine (_migrations table tracker, Migrations 001-009)
+│   ├── validation/        # Zod input & bulk import validation schemas
 │   └── utils/             # Pino structured logger and Cloudinary upload pipelines
-├── tests/                 # Unit and integration test suites (Vitest)
+├── packages/
+│   └── shared/            # Shared TypeScript types, schemas, and taxonomy resolvers (resolve.ts)
 ├── Dockerfile             # Multi-stage production container build
-├── docker-compose.yml     # Full-stack container orchestration (Postgres + JACHAI)
-├── DataInstruction.txt    # Database entry manual and JSON/SQL schema guide
-└── run.txt                # Deployment guide (Termux, Cloud Free Tiers, Sketchware Pro)
+├── docker-compose.yml     # Full-stack container orchestration (Postgres 16 + JACHAI)
+├── DataInstruction.txt    # Database entry manual, JSON/CSV/Excel specs, & system manual
+└── README.md              # Monorepo architecture and system documentation
 ```
 
 ---
 
-## 🎯 2. Feature & Functional Overview
+## 🎯 2. Core Systems & Technical Specifications
 
-### 🎓 Student Learning Ecosystem
-- **Bengali-First UI & Pedagogy**: High-contrast typography and authentic Bengali academic vocabulary tailored for DU, BUET, Medical, and GST aspirants.
-- **Categorized Question Bank**: Filter by Subject, Paper (1st/2nd), Chapter, Topic, Difficulty (`Easy`, `Medium`, `Hard`), and University standard (`Varsity A`, `Engineering`, `Medical`, `GST`).
-- **Dynamic Real-Time Counting Engine**: Live question aggregation from PostgreSQL via `/api/questions/counts` across Subject cards, Category blocks, Chapter chips, and Topic chips without static or hardcoded estimates.
-- **Real-Time Mock Exam Engine**: Live exam timer, custom question sets, randomized shuffling, instant scoring, and accurate negative marking penalty deduction (0.25 marks).
-- **AI Tutor & Instant Solver**: Multi-turn academic tutor powered by Google Gemini (primary) with seamless OpenRouter fallback for LaTeX equations and step-by-step problem breakdown.
-- **Photo-Solve & OCR**: Upload or capture textbook questions to receive instant solutions, step-by-step explanations, and related concept links.
-- **Progress Tracking & Analytics**: Accuracy percentages, subject-wise mastery graphs, streak tracking, question bookmarking, and past mistake logs.
-- **Google Calendar Study Sync**: Synchronize upcoming admission exam schedules directly to Google Calendar via OAuth2.
+### 🖥️ Frontend System (React 19 + Tailwind CSS + Vite)
+- **Student Learning Engine**: High-contrast Bengali UI, KaTeX/LaTeX mathematical equation rendering, TikZ vector diagram support, real-time mock exams with negative marking (0.25 penalty), and AI photo-solver.
+- **Admin Taxonomy Health Portal**: 5 dedicated sub-tabs:
+  1. *Duplicate Suspects*: Single-CTE grouping & safe transactional merging into survivor topic.
+  2. *Zero-Question Topics*: Diagnostic view & 1-click batch cleanup.
+  3. *Orphan Questions*: Detached question identification & re-assignment to valid topics.
+  4. *Live Master ID Chart*: Exportable live text/markdown hierarchy (`Subject ➔ Chapter ➔ Topic`).
+  5. *Taxonomy Audit Log*: Live transactional timeline of all taxonomy modifications (`taxonomy_audit_logs`).
+- **Cascading Taxonomy Selector (`CascadingTaxonomyPicker`)**: 4-level cascading picker (`Subject` ➔ `Paper` ➔ `Chapter` ➔ `Topic`) with live search, chapter filtering, and inline topic creation (`+ নতুন টপিক তৈরি করুন`).
 
-### 🛡️ Administrator CMS & Operations
-- **Secure Admin Authentication**: JWT token authentication with `{ role: 'admin' }` claims and short-lived expiry.
-- **Smart Bulk Importer 3.0 & Taxonomy Resolver**: 3-stage lifecycle (`Parse` ➔ `Resolve / Multi-Tier Preview` ➔ `Transactional Commit`) with Bengali Unicode normalization (`packages/shared/src/taxonomy/resolve.ts`), categorization into `fullyResolvedRows`, `ambiguousRows` (candidate mismatch detection), and `missingTaxonomyRows`, transactional `ON CONFLICT DO UPDATE` question and taxonomy upserts, and real-time counter recalculations in the same transaction.
-- **Cascading Taxonomy Picker**: Searchable 4-level cascading selector (`Subject` ➔ `Paper` ➔ `Chapter` ➔ `Topic`) with in-line topic creation (`+ নতুন টপিক তৈরি করুন`) and immediate reactive refresh across Bulk Import and Question Edit modals.
-- **Taxonomy Health Dashboard**: Diagnostic and remediation portal visualizing duplicate suspect topics, zero-question topics, and orphan questions with transactional Merge, Normalize, Delete Empty, and Re-assign actions.
-- **Live Dynamic Master ID Chart**: Live export endpoints (`/api/admin/taxonomy/export-master-chart` and `/api/admin/taxonomy/tree`) rendering the live hierarchy of subjects, chapters, and topics on-demand.
-- **Database Hardening & Auto-Deduplication**: Schema migration `008_taxonomy_hardening` enforcing foreign keys, composite UNIQUE constraints, single-CTE survivor chapter mapping, and diagnostic health views (`duplicate_suspect_topics`, `zero_question_topics`, `orphan_topic_ids`).
-- **Question & Topic Editor**: Visual question creation, LaTeX equation previews, option management, and batch JSON imports.
-- **AI Question Extractor**: Convert unstructured question papers and scans into structured database models.
-- **Drafts Approval Queue**: Moderate community and OCR-extracted drafts before publishing to the live question bank.
-- **Masked API Key Manager**: Safely monitor active OpenRouter and Gemini keys with zero raw secret leaks.
+### ⚙️ Backend System (Express 4.21 + PostgreSQL 16 + Zod)
+- **REST & Router Layer**: Clean API contracts for questions, topics, taxonomy health, master chart exports, and AI integrations.
+- **Authentication & Security**: JWT authentication with `{ role: 'admin' }` claims, `express-rate-limit`, `helmet` security headers, and anti-spoofing user context extraction from tokens.
+- **Structured Logging**: Pino structured logger tracking migration statuses, query execution times, and operational warnings.
+
+### 📥 Smart Data Import System 3.0
+- **3-Phase Lifecycle**: `Parse` (CSV/Excel/JSON) ➔ `Resolve / Multi-Tier Preview` ➔ `Transactional Commit`.
+- **Unicode & Whitespace Normalization**: Strips zero-width characters (`ZWJ`, `ZWNJ`, `BOM`) and normalizes Bangla glyphs via `packages/shared/src/taxonomy/resolve.ts`.
+- **Pre-Flight Warning Engine**: Highlights missing/unassigned taxonomy rows in the preview header with dedicated filter buttons (`Missing Taxonomy`).
+- **Instant Custom Topic Persistence**: Inline creation of custom topics directly saves to PostgreSQL `topics` table and records entry in `taxonomy_audit_logs`.
+- **Transactional Upsert**: Uses `ON CONFLICT (id) DO UPDATE` for safe idempotent re-imports and recalculates `total_questions`, `mcq_count`, and `written_count` inside the same transaction.
+
+### 🔍 4-Layer Filtering System
+1. **Layer 1 (Database Indexing)**: Relational foreign keys and compound indices `(topic_id, category)`, `(chapter_id, topic_id)` on `questions` and `written_questions`.
+2. **Layer 2 (Smart Import Auto-Resolver)**: Automatically resolves topic names to canonical `topic_id`s or preserves custom IDs.
+3. **Layer 3 (Dynamic Recount Engine)**: Live aggregation queries via `/api/questions/counts` and `/api/topics/stats` ensuring accurate counts across UI chips without hardcoded values.
+4. **Layer 4 (Centralized Pre-Query Filter Engine - `src/utils/questionFilter.ts`)**: Pre-query transformer supporting alias resolution (`physics_1`, `phy1`, `phy_p1_c2`), converting user filters into canonical database keys before hitting PostgreSQL.
+
+### 🔄 Migration & Auto-Healing System (`server/migrations.ts`)
+- **Versioned Migration Runner**: Runs on startup, executing pending migrations atomically and tracking them in `_migrations`.
+- **Migration 008 (Taxonomy Hardening & FK Safety)**:
+  - Cleans whitespace and decomposed Unicode characters across `subjects`, `chapters`, and `topics`.
+  - Ensures parent references exist: auto-creates missing subjects (including fallback `physics_1`) and missing orphan chapters with required `chapter_no = 0` and default `paper = '1st'` to guarantee `NOT NULL` and FK constraint (`chapters_subject_id_fkey`) compliance.
+  - Performs single-CTE deduplication for duplicate topics and duplicate chapters, re-pointing questions to survivor IDs.
+  - Establishes diagnostic health views: `duplicate_suspect_topics`, `zero_question_topics`, `orphan_topic_ids`.
+- **Migration 009 (Taxonomy Audit Logs)**: Creates `taxonomy_audit_logs` table (`id`, `action`, `entity_type`, `entity_id`, `details`, `performed_by`, `created_at`) with index on `created_at`.
+
+### ✅ Data Validation System
+- **Zod Schemas (`server/validation/`)**: Strict validation for questions, options (`A`, `B`, `C`, `D`), correct answers, tags, ratings (`1-3`), and categories (`varsity_a`, `engineering`, `medical`, `academic`, `main_book`).
+- **LaTeX / KaTeX Integrity Checks**: Validates math equation delimiters (`$...$`, `$$...$$`) and JSON backslash escaping rules (`\\`).
 
 ---
 
@@ -93,17 +115,17 @@ JACHAI uses **PostgreSQL 16** with automatic in-memory SQLite fallback during lo
 │  questions      │  chat_history           │  admin_drafts   │
 │  - id           │  - id, user_id (FK)     │  - id, source   │
 │  - subject_id   │  - role, content        │  - content      │
-│  - topic_id (FK)│  - model_used, provider │  - status       │
-│  - options, ans │  - created_at           │  - reviewed_by  │
+│  - topic_id (FK)│  - options, ans         │  - status       │
+│  - options, ans │  - model_used, provider │  - reviewed_by  │
 ├─────────────────┼─────────────────────────┼─────────────────┤
-│  admin_settings │  knowledge_snippets     │  _migrations    │
-│  - key          │  - id, subject_id       │  - id, name     │
-│  - value        │  - content_bn, answer   │  - executed_at  │
+│  admin_settings │  knowledge_snippets     │  taxonomy_audit │
+│  - key          │  - id, subject_id       │  - id, action   │
+│  - value        │  - content_bn, answer   │  - entity_id    │
 └─────────────────┴─────────────────────────┴─────────────────┘
 ```
 
 ### Automatic Migration Runner (`/server/migrations.ts`)
-- Schema changes are versioned and executed automatically on startup inside atomic transactions (`001_initial_schema` to `007_relational_hierarchy_and_performance_indices`).
+- Schema changes are versioned and executed automatically on startup inside atomic transactions (`001_initial_schema` to `009_taxonomy_audit_logs`).
 - Pre-checks and idempotency safeguards (`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`) ensure complete resilience across pre-existing tables (`subjects`, `chapters`, `written_questions`, `topics`, `questions`).
 - Failures trigger an instant rollback to maintain database integrity.
 
