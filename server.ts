@@ -60,7 +60,7 @@ import {
   getActiveUsersTelemetryFromDb,
   getQuestionCounts,
 } from './server/db.js';
-import { resolveQuestionsImport, commitQuestionsImport } from './server/services/importService.js';
+import { resolveQuestionsImport, commitQuestionsImport, rollbackImportBatch } from './server/services/importService.js';
 import {
   getTaxonomyTreeService,
   getTaxonomyHealthService,
@@ -1818,6 +1818,9 @@ app.post('/api/admin/questions/import-commit', authenticateAdmin, async (req: Re
       count: commitResult.importedQuestionsCount,
       createdTaxonomyCount: commitResult.createdTaxonomyCount,
       updatedTopicCountersCount: commitResult.updatedTopicCountersCount,
+      batchId: commitResult.batchId,
+      chunkCount: commitResult.chunkCount,
+      failedChunksCount: commitResult.failedChunksCount,
       message: commitResult.message,
     });
   } catch (error: any) {
@@ -1828,6 +1831,26 @@ app.post('/api/admin/questions/import-commit', authenticateAdmin, async (req: Re
     });
   }
 });
+
+// POST /api/admin/questions/import-rollback/:batchId or /api/admin/import/rollback/:batchId (Rollback import batch within 24 hours - Protected Admin)
+app.post(
+  ['/api/admin/questions/import-rollback/:batchId', '/api/admin/import/rollback/:batchId'],
+  authenticateAdmin,
+  async (req: Request, res: Response) => {
+    try {
+      const { batchId } = req.params;
+      const performedBy = (req as any).user?.username || (req as any).user?.email || 'admin';
+      const result = await rollbackImportBatch(batchId, performedBy);
+      return res.status(200).json(result);
+    } catch (error: any) {
+      console.error('Error rolling back import batch:', error);
+      return res.status(500).json({
+        error: 'Import rollback failed',
+        details: error.message || 'An unexpected error occurred during rollback.',
+      });
+    }
+  }
+);
 
 // ---------------- TAXONOMY MANAGEMENT & HEALTH API ----------------
 

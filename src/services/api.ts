@@ -794,6 +794,9 @@ export interface ImportCommitApiResponse {
   count: number;
   createdTaxonomyCount: number;
   updatedTopicCountersCount: number;
+  batchId?: string;
+  chunkCount?: number;
+  failedChunksCount?: number;
   message: string;
   error?: string;
   details?: string;
@@ -2073,6 +2076,24 @@ export async function healAndSyncDatabaseApi(): Promise<DatabaseHealResult> {
   const data = await res.json();
   if (!res.ok) {
     throw new Error(data.error || 'ডেটাবেজ নরম্যালাইজেশন ও সিঙ্ক ব্যর্থ হয়েছে');
+  }
+  return data;
+}
+
+export async function rollbackQuestionsImportApi(batchId: string): Promise<{
+  success: boolean;
+  deletedMcqCount: number;
+  deletedWrittenCount: number;
+  message: string;
+}> {
+  const res = await fetchWithRetry(getApiUrl(`/api/admin/questions/import-rollback/${encodeURIComponent(batchId)}`), {
+    method: 'POST',
+    headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'ইমপোর্ট রোলব্যাক করতে ব্যর্থ হয়েছে');
   }
   return data;
 }

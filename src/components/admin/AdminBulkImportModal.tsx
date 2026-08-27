@@ -50,6 +50,7 @@ import {
   bulkImportQuestionsApi,
   importQuestionsPreviewApi,
   importQuestionsCommitApi,
+  rollbackQuestionsImportApi,
   bulkImportWrittenQuestionsApi,
   bulkImportTopicsApi,
   bulkImportKnowledgeSnippetsApi,
@@ -99,6 +100,18 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
   const [autoCreateSuccessMsg, setAutoCreateSuccessMsg] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [previewFilter, setPreviewFilter] = useState<'all' | 'valid' | 'warning' | 'invalid' | 'missing_taxonomy'>('all');
+
+  // Committed Batch & Rollback State (Step 2 Implementation)
+  const [committedBatch, setCommittedBatch] = useState<{
+    batchId?: string;
+    count: number;
+    chunkCount?: number;
+    failedChunksCount?: number;
+    message: string;
+    committedAt: number;
+  } | null>(null);
+  const [isRollingBack, setIsRollingBack] = useState(false);
+  const [rollbackMessage, setRollbackMessage] = useState<string | null>(null);
 
   // Selected question indices for bulk topic assignment
   const [selectedQuestionIndices, setSelectedQuestionIndices] = useState<number[]>([]);
@@ -680,6 +693,7 @@ Ans: A
 
     setIsSubmitting(true);
     setSubmitError(null);
+    setRollbackMessage(null);
 
     try {
       if (importType === 'mcq') {
@@ -705,8 +719,17 @@ Ans: A
         const res = await importQuestionsCommitApi({
           questions: formatted,
         });
+
+        setCommittedBatch({
+          batchId: res.batchId,
+          count: res.count,
+          chunkCount: res.chunkCount,
+          failedChunksCount: res.failedChunksCount,
+          message: res.message || `${res.count} টি প্রশ্ন সফলভাবে ইমপোর্ট সম্পন্ন হয়েছে!`,
+          committedAt: Date.now(),
+        });
+        setParsedQuestions([]);
         onSuccess(res.count);
-        onClose();
       } else if (importType === 'written') {
         const formatted = itemsToUpload.map((q) => ({
           subject_id: q.subject_id,
@@ -724,8 +747,13 @@ Ans: A
         }));
 
         const res = await bulkImportWrittenQuestionsApi(formatted);
+        setCommittedBatch({
+          count: res.count,
+          message: res.message || `${res.count} টি লিখিত প্রশ্ন সফলভাবে ইমপোর্ট করা হয়েছে!`,
+          committedAt: Date.now(),
+        });
+        setParsedQuestions([]);
         onSuccess(res.count);
-        onClose();
       } else if (importType === 'topic') {
         const formatted = itemsToUpload.map((q) => ({
           id: q.id || q.topic_code || `top_${Date.now()}`,
@@ -761,6 +789,25 @@ Ans: A
       setSubmitError(err.message || 'ডেটাবেজে ইমপোর্ট সংরক্ষণ ব্যর্থ হয়েছে।');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleRollbackImport = async () => {
+    if (!committedBatch?.batchId) return;
+    if (!window.confirm(`আপনি কি নিশ্চিত যে ইমপোর্ট ব্যাচ '${committedBatch.batchId}' এর সমস্ত প্রশ্ন মুছে ফেলবেন?`)) {
+      return;
+    }
+    setIsRollingBack(true);
+    setRollbackMessage(null);
+    try {
+      const res = await rollbackQuestionsImportApi(committedBatch.batchId);
+      setRollbackMessage(res.message);
+      setCommittedBatch(null);
+      onSuccess(0);
+    } catch (err: any) {
+      alert(err.message || 'রোলব্যাক করা সম্ভব হয়নি।');
+    } finally {
+      setIsRollingBack(false);
     }
   };
 
@@ -849,6 +896,88 @@ Ans: A
             </button>
           </div>
         </div>
+
+        {/* Committed Batch Notification Banner (Step 2 Implementation) */}
+        {committedBatch && (
+          <div className="p-5 bg-emerald-50/90 border-b border-emerald-200 shrink-0">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-600 shrink-0">
+                  <CheckCircle2 className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-emerald-900">ইমপোর্ট ব্যাচ সফলভাবে সম্পন্ন হয়েছে!</h3>
+                  <p className="text-xs text-emerald-700 mt-0.5">{committedBatch.message}</p>
+                  {committedBatch.batchId && (
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                      <span className="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-800 font-mono font-bold border border-emerald-300">
+                        ব্যাচ ID: {committedBatch.batchId}
+                      </span>
+                      {committedBatch.chunkCount !== undefined && (
+                        <span className="px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 font-semibold border border-indigo-200">
+                          ট্রানজ্যাকশন ট্রাঙ্কস: {committedBatch.chunkCount}
+                        </span>
+                      )}
+                      <span className="text-slate-600 font-medium">
+                        (মোট ইমপোর্টকৃত আইটেম: {committedBatch.count})
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCommittedBatch(null)}
+                className="text-xs text-slate-500 hover:text-slate-700 underline font-medium cursor-pointer"
+              >
+                প্যানেল ডিসমিস করুন
+              </button>
+            </div>
+
+            {committedBatch.batchId && (
+              <div className="mt-4 pt-3 border-t border-emerald-200/80 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-1.5 text-xs text-amber-800 bg-amber-50 px-3 py-1.5 rounded-xl border border-amber-200">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>ভুলবশত ইমপোর্ট হলে ২৪ ঘণ্টার মধ্যে সম্পূর্ণ ব্যাচ 'Undo / Rollback' করতে পারবেন।</span>
+                </div>
+                <button
+                  type="button"
+                  disabled={isRollingBack}
+                  onClick={handleRollbackImport}
+                  className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs flex items-center gap-2 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {isRollingBack ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>রোলব্যাক হচ্ছে...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-4 h-4" />
+                      <span>🔄 এই ইমপোর্ট Undo / Rollback করুন</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {rollbackMessage && (
+          <div className="p-4 bg-indigo-50 border-b border-indigo-200 text-indigo-900 text-xs font-semibold flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-indigo-600 shrink-0" />
+              <span>{rollbackMessage}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setRollbackMessage(null)}
+              className="text-indigo-600 hover:text-indigo-800 text-[11px] underline cursor-pointer"
+            >
+              মুছে দিন
+            </button>
+          </div>
+        )}
 
         {/* Global Settings & Defaults Bar */}
         <div className="bg-slate-50 border-b border-slate-200 p-4 shrink-0">

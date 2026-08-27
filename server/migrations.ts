@@ -930,6 +930,30 @@ export const migrations: Migration[] = [
       await client.query(`DROP TABLE IF EXISTS taxonomy_audit_logs CASCADE;`);
     },
   },
+  {
+    id: '010_import_batch_tracking',
+    name: 'Add import_batch_id to questions and written_questions tables',
+    up: async (client: pg.PoolClient) => {
+      logger.info('[Migration 010] Adding import_batch_id column to questions and written_questions...');
+      await client.query(`
+        ALTER TABLE questions ADD COLUMN IF NOT EXISTS import_batch_id VARCHAR(255);
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS import_batch_id VARCHAR(255);
+
+        CREATE INDEX IF NOT EXISTS idx_questions_import_batch_id ON questions(import_batch_id);
+        CREATE INDEX IF NOT EXISTS idx_written_questions_import_batch_id ON written_questions(import_batch_id);
+      `);
+      logger.info('[Migration 010] ✅ import_batch_id added successfully.');
+    },
+    down: async (client: pg.PoolClient) => {
+      logger.info('[Migration 010] Rolling back import_batch_id columns...');
+      await client.query(`
+        DROP INDEX IF EXISTS idx_questions_import_batch_id;
+        DROP INDEX IF EXISTS idx_written_questions_import_batch_id;
+        ALTER TABLE questions DROP COLUMN IF EXISTS import_batch_id;
+        ALTER TABLE written_questions DROP COLUMN IF EXISTS import_batch_id;
+      `);
+    },
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

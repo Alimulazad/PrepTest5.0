@@ -162,6 +162,9 @@ export interface CommitImportResult {
   importedQuestionsCount: number;
   createdTaxonomyCount: number;
   updatedTopicCountersCount: number;
+  batchId?: string;
+  chunkCount?: number;
+  failedChunksCount?: number;
   message: string;
 }
 
@@ -570,16 +573,17 @@ export async function commitQuestionsImport(
     };
   }
 
+  const batchId = `batch_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const activePool = getPgPool();
   let createdTaxonomyCount = 0;
+  let totalImportedCount = 0;
 
   if (isPostgresActive() && activePool) {
     const client = await activePool.connect();
     try {
-      await client.query('BEGIN');
-
-      // --- 1. UPSERT TAXONOMY FIRST ---
+      // --- 1. UPSERT TAXONOMY FIRST (in separate transaction) ---
       if (createTaxonomy.length > 0) {
+        await client.query('BEGIN');
         for (const item of createTaxonomy) {
           if (item.type === 'chapter') {
             const chapId = item.id || generateChapterId(item.subject_id, undefined, item.bangla_name || item.name);
@@ -627,17 +631,24 @@ export async function commitQuestionsImport(
             createdTaxonomyCount++;
           }
         }
+        await client.query('COMMIT');
       }
 
-      // --- 2. UPSERT QUESTIONS WITH ON CONFLICT DO UPDATE ---
+      // --- 2. CHUNKED UPSERT QUESTIONS (500 ROWS PER CHUNK TRANSACTION) ---
+      const CHUNK_SIZE = 500;
+      const chunks: RawImportRow[][] = [];
+      for (let i = 0; i < questions.length; i += CHUNK_SIZE) {
+        chunks.push(questions.slice(i, i + CHUNK_SIZE));
+      }
+
       const upsertQuestionSql = `
         INSERT INTO questions (
           id, subject_id, subject_name, paper, chapter_id, chapter_name,
           topic_id, topic_name, category, question_text, math_formula_latex,
           options, correct_ans, explanation, explanation_latex,
           question_image_url, explanation_image_url,
-          tags, star_rating, type, difficulty, created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+          tags, star_rating, type, difficulty, created_at, import_batch_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
         ON CONFLICT (id) DO UPDATE SET
           subject_id = EXCLUDED.subject_id,
           subject_name = EXCLUDED.subject_name,
@@ -658,65 +669,83 @@ export async function commitQuestionsImport(
           tags = EXCLUDED.tags,
           star_rating = EXCLUDED.star_rating,
           type = EXCLUDED.type,
-          difficulty = EXCLUDED.difficulty;
+          difficulty = EXCLUDED.difficulty,
+          import_batch_id = EXCLUDED.import_batch_id;
       `;
 
-      for (const q of questions) {
-        let optionsObj: { A: string; B: string; C: string; D: string; [key: string]: string } = {
-          A: '',
-          B: '',
-          C: '',
-          D: '',
-        };
+      let failedChunksCount = 0;
 
-        if (Array.isArray(q.options)) {
-          for (const opt of q.options) {
-            if (opt) {
-              const key = opt.id || opt.label || 'A';
-              optionsObj[key] = opt.text ?? opt.value ?? '';
+      for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
+        const chunk = chunks[cIdx];
+        await client.query('BEGIN');
+        try {
+          for (const q of chunk) {
+            let optionsObj: { A: string; B: string; C: string; D: string; [key: string]: string } = {
+              A: '',
+              B: '',
+              C: '',
+              D: '',
+            };
+
+            if (Array.isArray(q.options)) {
+              for (const opt of q.options) {
+                if (opt) {
+                  const key = opt.id || opt.label || 'A';
+                  optionsObj[key] = opt.text ?? opt.value ?? '';
+                }
+              }
+            } else if (q.options && typeof q.options === 'object') {
+              optionsObj = { ...optionsObj, ...q.options };
             }
+
+            let tagsArr: string[] = [];
+            if (Array.isArray(q.tags)) {
+              tagsArr = q.tags.map((t: any) => String(t));
+            } else if (typeof q.tags === 'string' && q.tags.trim()) {
+              tagsArr = q.tags.split(',').map((t) => t.trim()).filter(Boolean);
+            }
+
+            const questionId = q.id || `q_${q.subject_id || 'phy'}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+            const paperStr = q.paper === 2 || q.paper === '2' || q.paper === '2nd' ? '2nd' : '1st';
+
+            await client.query(upsertQuestionSql, [
+              questionId,
+              q.subject_id || 'physics_1',
+              q.subject_name || 'পদার্থবিজ্ঞান ১ম পত্র',
+              paperStr,
+              q.chapter_id || 'phy1_ch1',
+              q.chapter_name || 'অধ্যায়',
+              q.topic_id || null,
+              q.topic_name || null,
+              q.category || 'varsity_a',
+              (q.question_text || q.questionText || q.question || '').trim(),
+              q.math_formula_latex || null,
+              JSON.stringify(optionsObj),
+              (q.correct_ans || q.correctAnswer || q.ans || 'A').trim().toUpperCase(),
+              q.explanation || q.solution || '',
+              q.explanation_latex || null,
+              q.question_image_url || null,
+              q.explanation_image_url || null,
+              JSON.stringify(tagsArr),
+              Math.min(3, Math.max(1, Number(q.star_rating) || 3)),
+              q.type || 'mcq',
+              q.difficulty || 'medium',
+              Date.now(),
+              batchId,
+            ]);
           }
-        } else if (q.options && typeof q.options === 'object') {
-          optionsObj = { ...optionsObj, ...q.options };
+
+          await client.query('COMMIT');
+          totalImportedCount += chunk.length;
+        } catch (chunkErr: any) {
+          await client.query('ROLLBACK');
+          failedChunksCount++;
+          logger.error(`[ImportService] Chunk ${cIdx + 1}/${chunks.length} failed: ${chunkErr.message}`);
         }
-
-        let tagsArr: string[] = [];
-        if (Array.isArray(q.tags)) {
-          tagsArr = q.tags.map((t: any) => String(t));
-        } else if (typeof q.tags === 'string' && q.tags.trim()) {
-          tagsArr = q.tags.split(',').map((t) => t.trim()).filter(Boolean);
-        }
-
-        const questionId = q.id || `q_${q.subject_id || 'phy'}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-        const paperStr = q.paper === 2 || q.paper === '2' || q.paper === '2nd' ? '2nd' : '1st';
-
-        await client.query(upsertQuestionSql, [
-          questionId,
-          q.subject_id || 'physics_1',
-          q.subject_name || 'পদার্থবিজ্ঞান ১ম পত্র',
-          paperStr,
-          q.chapter_id || 'phy1_ch1',
-          q.chapter_name || 'অধ্যায়',
-          q.topic_id || null,
-          q.topic_name || null,
-          q.category || 'varsity_a',
-          (q.question_text || q.questionText || q.question || '').trim(),
-          q.math_formula_latex || null,
-          JSON.stringify(optionsObj),
-          (q.correct_ans || q.correctAnswer || q.ans || 'A').trim().toUpperCase(),
-          q.explanation || q.solution || '',
-          q.explanation_latex || null,
-          q.question_image_url || null,
-          q.explanation_image_url || null,
-          JSON.stringify(tagsArr),
-          Math.min(3, Math.max(1, Number(q.star_rating) || 3)),
-          q.type || 'mcq',
-          q.difficulty || 'medium',
-          Date.now(),
-        ]);
       }
 
-      // --- 3. RECALCULATE TOPIC & CHAPTER COUNTERS IN SAME TRANSACTION ---
+      // --- 3. RECALCULATE COUNTERS & LOG AUDIT ---
+      await client.query('BEGIN');
       const updateTopicCountersRes = await client.query(`
         UPDATE topics t
         SET 
@@ -730,19 +759,37 @@ export async function commitQuestionsImport(
         SET total_topics = (SELECT COUNT(*)::int FROM topics t WHERE t.chapter_id = c.id);
       `);
 
+      // Audit Log
+      const auditId = `audit_import_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      await client.query(
+        `INSERT INTO taxonomy_audit_logs (id, action, entity_type, entity_id, details, performed_by, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          auditId,
+          'bulk_import_commit',
+          'import_batch',
+          batchId,
+          JSON.stringify({ totalImportedCount, createdTaxonomyCount, chunkCount: chunks.length, batchId }),
+          'admin',
+          Date.now(),
+        ]
+      );
+
       await client.query('COMMIT');
-      logger.info(`[ImportService] Commit success: ${questions.length} questions imported, ${createdTaxonomyCount} taxonomy items created.`);
+      logger.info(`[ImportService] Batch ${batchId} commit success: ${totalImportedCount} questions, ${chunks.length} chunks (${failedChunksCount} failed).`);
 
       return {
-        success: true,
-        importedQuestionsCount: questions.length,
+        success: totalImportedCount > 0,
+        importedQuestionsCount: totalImportedCount,
         createdTaxonomyCount,
         updatedTopicCountersCount: updateTopicCountersRes.rowCount || 0,
-        message: `সফলভাবে ${questions.length} টি প্রশ্ন এবং ${createdTaxonomyCount} টি ট্যাক্সোনমি আইটেম সংরক্ষিত ও কাউন্টার আপডেট হয়েছে।`,
+        batchId,
+        chunkCount: chunks.length,
+        failedChunksCount,
+        message: `সফলভাবে ${totalImportedCount} টি প্রশ্ন (${chunks.length} চ্যাঙ্ক) এবং ${createdTaxonomyCount} টি ট্যাক্সোনমি আইটেম সংরক্ষিত হয়েছে। (ব্যাচ ID: ${batchId})`,
       };
     } catch (err: any) {
-      await client.query('ROLLBACK');
-      logger.error(`[ImportService] Transaction rolled back due to error: ${err.message}`);
+      logger.error(`[ImportService] Batch commit failed: ${err.message}`);
       throw new Error(`বাল্ক ইমপোর্ট ট্রানজ্যাকশন ব্যর্থ: ${err.message}`);
     } finally {
       client.release();
@@ -770,7 +817,8 @@ export async function commitQuestionsImport(
       star_rating: (Math.min(3, Math.max(1, Number(q.star_rating) || 3)) as 1 | 2 | 3),
       type: q.type || 'mcq',
       difficulty: q.difficulty || 'medium',
-    });
+      import_batch_id: batchId,
+    } as any);
   }
 
   return {
@@ -778,6 +826,92 @@ export async function commitQuestionsImport(
     importedQuestionsCount: questions.length,
     createdTaxonomyCount: 0,
     updatedTopicCountersCount: memoryStore.topics.size,
-    message: `সফলভাবে ${questions.length} টি প্রশ্ন মেমোরিতে ইমপোর্ট করা হয়েছে।`,
+    batchId,
+    chunkCount: 1,
+    failedChunksCount: 0,
+    message: `সফলভাবে ${questions.length} টি প্রশ্ন মেমোরিতে ইমপোর্ট করা হয়েছে। (ব্যাচ ID: ${batchId})`,
+  };
+}
+
+export async function rollbackImportBatch(
+  batchId: string,
+  performedBy: string = 'admin'
+): Promise<{ success: boolean; deletedMcqCount: number; deletedWrittenCount: number; message: string }> {
+  if (!batchId) {
+    throw new Error('রোলব্যাক এর জন্য বৈধ batchId আবশ্যক।');
+  }
+
+  const activePool = getPgPool();
+  if (isPostgresActive() && activePool) {
+    const client = await activePool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const mcqDel = await client.query('DELETE FROM questions WHERE import_batch_id = $1', [batchId]);
+      const writtenDel = await client.query('DELETE FROM written_questions WHERE import_batch_id = $1', [batchId]);
+
+      const deletedMcqCount = mcqDel.rowCount || 0;
+      const deletedWrittenCount = writtenDel.rowCount || 0;
+
+      // Recalculate topic & chapter counters
+      await client.query(`
+        UPDATE topics t
+        SET 
+          mcq_count = (SELECT COUNT(*)::int FROM questions q WHERE q.topic_id = t.id),
+          written_count = (SELECT COUNT(*)::int FROM written_questions w WHERE w.topic_id = t.id),
+          total_questions = (SELECT COUNT(*)::int FROM questions q WHERE q.topic_id = t.id) + (SELECT COUNT(*)::int FROM written_questions w WHERE w.topic_id = t.id);
+
+        UPDATE chapters c
+        SET total_topics = (SELECT COUNT(*)::int FROM topics t WHERE t.chapter_id = c.id);
+      `);
+
+      // Audit log entry
+      const auditId = `audit_rollback_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      await client.query(
+        `INSERT INTO taxonomy_audit_logs (id, action, entity_type, entity_id, details, performed_by, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          auditId,
+          'bulk_import_rollback',
+          'import_batch',
+          batchId,
+          JSON.stringify({ deletedMcqCount, deletedWrittenCount, batchId }),
+          performedBy,
+          Date.now(),
+        ]
+      );
+
+      await client.query('COMMIT');
+      logger.info(`[ImportService] Rollback batch ${batchId} success: ${deletedMcqCount} MCQ, ${deletedWrittenCount} written deleted.`);
+
+      return {
+        success: true,
+        deletedMcqCount,
+        deletedWrittenCount,
+        message: `ব্যাচ '${batchId}' এর ইমপোর্ট সফলভাবে রোলব্যাক করা হয়েছে। (${deletedMcqCount} MCQ ও ${deletedWrittenCount} Written মুছে ফেলা হয়েছে)`,
+      };
+    } catch (err: any) {
+      await client.query('ROLLBACK');
+      logger.error(`[ImportService] Rollback batch ${batchId} failed: ${err.message}`);
+      throw new Error(`ইমপোর্ট রোলব্যাক ব্যর্থ: ${err.message}`);
+    } finally {
+      client.release();
+    }
+  }
+
+  // Fallback memory store rollback
+  let deletedMcqCount = 0;
+  for (const [id, q] of Array.from(memoryStore.questions.entries())) {
+    if ((q as any).import_batch_id === batchId) {
+      memoryStore.questions.delete(id);
+      deletedMcqCount++;
+    }
+  }
+
+  return {
+    success: true,
+    deletedMcqCount,
+    deletedWrittenCount: 0,
+    message: `মেমোরি থেকে ব্যাচ '${batchId}' রোলব্যাক করা হয়েছে (${deletedMcqCount} প্রশ্ন ডিলিট)`,
   };
 }
