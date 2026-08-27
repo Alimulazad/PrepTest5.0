@@ -140,6 +140,16 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [previewFilter, setPreviewFilter] = useState<'all' | 'valid' | 'warning' | 'invalid' | 'missing_taxonomy'>('all');
 
+  // Step 5: Taxonomical Mapping Auto-Resolution State
+  const [isResolvingTaxonomy, setIsResolvingTaxonomy] = useState<boolean>(false);
+  const [autoCreateMissingTaxonomy, setAutoCreateMissingTaxonomy] = useState<boolean>(true);
+  const [resolutionSummary, setResolutionSummary] = useState<{
+    totalRows: number;
+    fullyResolvedCount: number;
+    ambiguousCount: number;
+    missingTaxonomyCount: number;
+  } | null>(null);
+
   // Committed Batch & Rollback State (Step 2 Implementation)
   const [committedBatch, setCommittedBatch] = useState<{
     batchId?: string;
@@ -562,6 +572,99 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
     return missing;
   }, [parsedQuestions, defaultChapter, defaultSubject]);
 
+  // Step 5: Auto-Resolve Taxonomy via Backend Fuzzy & Canonical Engine
+  const handleAutoResolveTaxonomy = async () => {
+    if (parsedQuestions.length === 0) return;
+
+    setIsResolvingTaxonomy(true);
+    setSubmitError(null);
+
+    try {
+      const previewRes = await importQuestionsPreviewApi({
+        questions: parsedQuestions,
+        defaults: {
+          subject_id: defaultSubject,
+          chapter_id: defaultChapter,
+          paper: defaultPaper as '1st' | '2nd',
+        },
+      });
+
+      if (previewRes && previewRes.summary) {
+        setResolutionSummary({
+          totalRows: previewRes.summary.totalRows,
+          fullyResolvedCount: previewRes.summary.fullyResolvedCount,
+          ambiguousCount: previewRes.summary.ambiguousCount,
+          missingTaxonomyCount: previewRes.summary.missingTaxonomyCount,
+        });
+
+        // Map resolved taxonomy details back onto parsedQuestions
+        const updated = parsedQuestions.map((q, idx) => {
+          const fully = previewRes.fullyResolvedRows?.find((r: any) => r.rowIndex === idx);
+          const ambig = previewRes.ambiguousRows?.find((r: any) => r.rowIndex === idx);
+          const missing = previewRes.missingTaxonomyRows?.find((r: any) => r.rowIndex === idx);
+
+          if (fully) {
+            const resTax = fully.resolvedTaxonomy;
+            return {
+              ...q,
+              subject_id: resTax.subject_id || q.subject_id,
+              subject_name: resTax.subject_name || q.subject_name,
+              paper: resTax.paper || q.paper,
+              chapter_id: resTax.chapter_id || q.chapter_id,
+              chapter_name: resTax.chapter_name || q.chapter_name,
+              topic_id: resTax.topic_id || q.topic_id,
+              topic_name: resTax.topic_name || q.topic_name,
+              status: 'valid' as const,
+              isValid: true,
+              isWarning: false,
+              smartMapped: true,
+              smartMappedNote: `🎯 অটো-ম্যাপড: ${resTax.chapter_name}${resTax.topic_name ? ' → ' + resTax.topic_name : ''}`,
+            };
+          }
+
+          if (ambig) {
+            const sug = ambig.suggestedResolved;
+            return {
+              ...q,
+              subject_id: sug?.subject_id || q.subject_id,
+              chapter_id: sug?.chapter_id || q.chapter_id,
+              topic_id: sug?.topic_id || q.topic_id,
+              topic_name: sug?.topic_name || q.topic_name,
+              status: 'warning' as const,
+              isValid: true,
+              isWarning: true,
+              smartMappedNote: `⚠️ দ্ব্যর্থবোধক: ${ambig.reason}`,
+            };
+          }
+
+          if (missing) {
+            const defs = missing.suggestedDefaults;
+            return {
+              ...q,
+              subject_id: defs?.subject_id || q.subject_id,
+              chapter_id: defs?.chapter_id || q.chapter_id,
+              topic_id: defs?.suggested_topic_id || q.topic_id,
+              topic_name: defs?.suggested_topic_name || q.topic_name,
+              status: 'warning' as const,
+              isValid: true,
+              isWarning: true,
+              smartMappedNote: `⚠️ অনুপস্থিত: ${missing.reason}`,
+            };
+          }
+
+          return q;
+        });
+
+        setParsedQuestions(updated);
+      }
+    } catch (err: any) {
+      console.error('Taxonomy resolution error:', err);
+      setSubmitError(`ট্যাক্সোনমি রেজোলিউশন ব্যর্থ: ${err.message || 'অজানা সমস্যা'}`);
+    } finally {
+      setIsResolvingTaxonomy(false);
+    }
+  };
+
   // Handle Auto-creating missing topics in Database
   const handleAutoCreateMissingTopics = async () => {
     if (missingTopicIds.length === 0) return;
@@ -905,9 +1008,30 @@ Ans: A
           type: q.type || 'mcq',
         }));
 
+        const createTaxonomyPayload: any[] = [];
+        if (autoCreateMissingTaxonomy) {
+          const knownTopicIds = new Set(dbTopics.map((t) => t.id));
+          const createdKeys = new Set<string>();
+
+          itemsToUpload.forEach((q) => {
+            if (q.topic_id && !knownTopicIds.has(q.topic_id) && !createdKeys.has(q.topic_id)) {
+              createdKeys.add(q.topic_id);
+              createTaxonomyPayload.push({
+                type: 'topic',
+                id: q.topic_id,
+                name: q.topic_name || q.topic_id,
+                bangla_name: q.topic_name || q.topic_id,
+                subject_id: q.subject_id || defaultSubject,
+                chapter_id: q.chapter_id || defaultChapter,
+              });
+            }
+          });
+        }
+
         // Use Background Job Enqueue + Polling Progress (Step 3)
         const jobRes = await importQuestionsAsyncApi({
           questions: formatted,
+          createTaxonomy: createTaxonomyPayload.length > 0 ? createTaxonomyPayload : undefined,
         });
 
         setActiveJob({
@@ -1737,6 +1861,77 @@ Ans: A
               </div>
 
               {/* PRE-FLIGHT AMBIGUOUS / MISSING TAXONOMY WARNING CARD */}
+              {/* STEP 5: TAXONOMY AUTO-RESOLUTION & MAPPING TOOLBAR */}
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white shadow-md space-y-3">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-indigo-500/30 border border-indigo-400/40 flex items-center justify-center text-indigo-300 shrink-0">
+                      <Sparkles className="w-4 h-4 text-indigo-300" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-white flex items-center gap-2">
+                        <span>ধাপ ৫: ট্যাক্সোনমিক্যাল ম্যাপিং ও স্মার্ট অটো-রিজলভ (Taxonomy Auto-Resolution)</span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-indigo-500/30 text-indigo-200 border border-indigo-400/30">
+                          Fuzzy Resolver
+                        </span>
+                      </h4>
+                      <p className="text-[11px] text-indigo-200/80 mt-0.5">
+                        ফাইলের অস্পষ্ট বা মিসিং বিষয়টি, অধ্যায় ও টপিক নাম সিস্টেমের ক্যানোনিক্যাল ট্যাক্সোনমি ট্রির সাথে অটো-রিজলভ করে নিখুঁত সিঙ্ক করুন।
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={isResolvingTaxonomy || parsedQuestions.length === 0}
+                      onClick={handleAutoResolveTaxonomy}
+                      className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      {isResolvingTaxonomy ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>স্মার্ট ম্যাচিং হচ্ছে...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                          <span>⚡ ট্যাক্সোনমি অটো-রিজলভ করুন (Auto-Match)</span>
+                        </>
+                      )}
+                    </button>
+
+                    <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-indigo-900/60 border border-indigo-700/60 text-xs font-semibold text-indigo-100 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={autoCreateMissingTaxonomy}
+                        onChange={(e) => setAutoCreateMissingTaxonomy(e.target.checked)}
+                        className="rounded border-indigo-400 text-indigo-500 focus:ring-indigo-400 cursor-pointer"
+                      />
+                      <span>অনুপস্থিত চ্যাপ্টার/টপিক ইমপোর্টে অটো-তৈরি করুন</span>
+                    </label>
+                  </div>
+                </div>
+
+                {resolutionSummary && (
+                  <div className="pt-2 border-t border-indigo-800/60 flex flex-wrap items-center gap-3 text-xs">
+                    <span className="text-emerald-300 font-bold bg-emerald-950/80 px-2.5 py-1 rounded-lg border border-emerald-500/40">
+                      🎯 {resolutionSummary.fullyResolvedCount} টি সম্পূর্ণ ম্যাপড
+                    </span>
+                    {resolutionSummary.ambiguousCount > 0 && (
+                      <span className="text-amber-300 font-bold bg-amber-950/80 px-2.5 py-1 rounded-lg border border-amber-500/40">
+                        ❓ {resolutionSummary.ambiguousCount} টি দ্ব্যর্থবোধক (Ambiguous)
+                      </span>
+                    )}
+                    {resolutionSummary.missingTaxonomyCount > 0 && (
+                      <span className="text-rose-300 font-bold bg-rose-950/80 px-2.5 py-1 rounded-lg border border-rose-500/40">
+                        ⚠️ {resolutionSummary.missingTaxonomyCount} টি ট্যাক্সোনমি অনুপস্থিত
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {missingTaxonomyCount > 0 && (
                 <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 text-amber-950 space-y-2">
                   <div className="flex items-start justify-between gap-3">
