@@ -395,6 +395,11 @@ export const migrations: Migration[] = [
 
       // B. Create placeholder chapters/subjects for orphan topics if any exist
       await client.query(`
+        -- Insert fallback subject if not present
+        INSERT INTO subjects (id, name, bangla_name, paper, created_at)
+        VALUES ('physics_1', 'Physics 1st Paper', 'পদার্থবিজ্ঞান ১ম পত্র', '1st', EXTRACT(EPOCH FROM NOW()) * 1000)
+        ON CONFLICT (id) DO NOTHING;
+
         -- Insert missing subjects referenced by chapters
         INSERT INTO subjects (id, name, bangla_name, paper, created_at)
         SELECT DISTINCT c.subject_id, c.subject_id, c.subject_id, '1st', EXTRACT(EPOCH FROM NOW()) * 1000
@@ -403,9 +408,17 @@ export const migrations: Migration[] = [
         WHERE s.id IS NULL AND c.subject_id IS NOT NULL AND c.subject_id <> ''
         ON CONFLICT (id) DO NOTHING;
 
-        -- Insert missing chapters referenced by topics
+        -- Insert missing subjects referenced directly by topics
+        INSERT INTO subjects (id, name, bangla_name, paper, created_at)
+        SELECT DISTINCT t.subject_id, t.subject_id, t.subject_id, '1st', EXTRACT(EPOCH FROM NOW()) * 1000
+        FROM topics t
+        LEFT JOIN subjects s ON t.subject_id = s.id
+        WHERE s.id IS NULL AND t.subject_id IS NOT NULL AND t.subject_id <> ''
+        ON CONFLICT (id) DO NOTHING;
+
+        -- Insert missing chapters referenced by topics (with chapter_no = 0, paper = '1st', and guaranteed subject_id)
         INSERT INTO chapters (id, subject_id, chapter_no, name, bangla_name, paper, created_at)
-        SELECT DISTINCT t.chapter_id, COALESCE(t.subject_id, 'physics_1'), 0, t.chapter_id, t.chapter_id, '1st', EXTRACT(EPOCH FROM NOW()) * 1000
+        SELECT DISTINCT t.chapter_id, COALESCE(NULLIF(t.subject_id, ''), 'physics_1'), 0, t.chapter_id, t.chapter_id, '1st', EXTRACT(EPOCH FROM NOW()) * 1000
         FROM topics t
         LEFT JOIN chapters c ON t.chapter_id = c.id
         WHERE c.id IS NULL AND t.chapter_id IS NOT NULL AND t.chapter_id <> ''
