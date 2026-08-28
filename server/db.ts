@@ -294,7 +294,12 @@ export async function getDatabase(): Promise<void> {
       }
 
       console.log('[PostgreSQL] 🔌 Testing connection to PostgreSQL...');
-      const client = await activePool.connect();
+      const client = await Promise.race([
+        activePool.connect(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('PostgreSQL connection timeout (3000ms)')), 3000)
+        ),
+      ]);
       client.release();
       isPgConnected = true;
       console.log('[PostgreSQL] ✅ Connected successfully. Running migration tool...');
@@ -1958,6 +1963,22 @@ export async function getUserByPhone(phone: string): Promise<UserRecord | null> 
 }
 
 export async function getUserById(id: string): Promise<UserRecord | null> {
+  if (id === 'guest_user') {
+    return {
+      id: 'guest_user',
+      phone: '01700000000',
+      password_hash: '',
+      name: 'অতিথি শিক্ষার্থী',
+      target_university: 'du_a',
+      target_unit: "'ক' ইউনিট (বিজ্ঞান)",
+      exam_year: 'HSC-26',
+      college: 'ঢাকা কলেজ',
+      avatar: '🧑‍🎓',
+      avatar_color: '#FF6B00',
+      created_at: Date.now(),
+    };
+  }
+
   try {
     const res = await query('SELECT * FROM users WHERE id = $1', [id]);
     if (res && res.rows.length > 0) return res.rows[0] as UserRecord;

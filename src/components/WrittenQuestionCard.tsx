@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { ChevronDown, ChevronUp, Bookmark, Eye, EyeOff, Sparkles, Flag, FileText, CheckCircle2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Bookmark, Eye, EyeOff, Sparkles, Flag, FileText, CheckCircle2, Globe } from 'lucide-react';
 import { WrittenQuestion } from '../types';
 import MathText from './MathText';
 import { OptimizedImage } from './common/OptimizedImage';
+import { WikiConceptModal } from './WikiConceptModal';
 
 export interface WrittenQuestionCardProps {
   question: WrittenQuestion;
@@ -27,6 +28,8 @@ export const WrittenQuestionCard: React.FC<WrittenQuestionCardProps> = ({
   forceShowAnswer = false,
 }) => {
   const [showExplanation, setShowExplanation] = useState<boolean>(false);
+  const [showWikiModal, setShowWikiModal] = useState<boolean>(false);
+  const [wikiQuery, setWikiQuery] = useState<string>('');
   const isExplanationVisible = showExplanation || forceShowAnswer;
 
   return (
@@ -59,7 +62,25 @@ export const WrittenQuestionCard: React.FC<WrittenQuestionCardProps> = ({
           )}
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
+          {/* Quick Wiki Concept Button */}
+          <button
+            type="button"
+            onClick={() => {
+              const queryCandidate =
+                question.chapter_name ||
+                (question.tags && question.tags.length > 0 ? question.tags[0] : '') ||
+                question.question_text.slice(0, 30);
+              setWikiQuery(queryCandidate);
+              setShowWikiModal(true);
+            }}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:hover:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 text-xs font-bold border border-emerald-200/60 dark:border-emerald-800/60 transition-colors cursor-pointer shadow-2xs"
+            title="উইকিপিডিয়া রেফারেন্স দেখুন"
+          >
+            <Globe className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            <span className="hidden sm:inline">উইকি কনসেপ্ট</span>
+          </button>
+
           {onToggleBookmark && (
             <button
               type="button"
@@ -179,6 +200,22 @@ export const WrittenQuestionCard: React.FC<WrittenQuestionCardProps> = ({
           </div>
         )}
       </div>
+      {/* Wikipedia Concept Modal */}
+      <WikiConceptModal
+        isOpen={showWikiModal}
+        onClose={() => setShowWikiModal(false)}
+        conceptQuery={wikiQuery}
+        onAskAIWithConcept={
+          onAskAI
+            ? (title) => {
+                onAskAI({
+                  ...question,
+                  question_text: `[টপিক: ${title}] ${question.question_text}`,
+                });
+              }
+            : undefined
+        }
+      />
     </div>
   );
 };

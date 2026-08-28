@@ -17,7 +17,9 @@ import {
   ExternalLink,
   Zap,
   Megaphone,
+  Globe,
 } from 'lucide-react';
+import { WikiConceptModal } from './WikiConceptModal';
 import {
   CarouselItem,
   CarouselSettings,
@@ -169,6 +171,7 @@ export const KnowledgeCarousel: React.FC = () => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const [activeWikiConcept, setActiveWikiConcept] = useState<string | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   // 1. Subscribe to Live Firebase Realtime Database
@@ -364,6 +367,24 @@ export const KnowledgeCarousel: React.FC = () => {
             </div>
           )}
 
+          {/* Quick Wiki Concept Trigger Button */}
+          {currentItem.type !== 'quote' && (
+            <button
+              type="button"
+              onClick={() => {
+                const topicQuery =
+                  currentItem.title_bn ||
+                  (currentItem.content_bn ? currentItem.content_bn.slice(0, 30) : 'পদার্থবিজ্ঞান');
+                setActiveWikiConcept(topicQuery);
+              }}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/15 hover:bg-white/25 text-white border border-white/30 backdrop-blur-xs transition-colors cursor-pointer"
+              title="উইকিপিডিয়া থেকে যাচাইকৃত কনসেপ্ট জানুন"
+            >
+              <Globe className="w-2.5 h-2.5 text-emerald-300" />
+              <span>উইকি তথ্য</span>
+            </button>
+          )}
+
           <span className="text-[10px] text-white/80 font-mono font-semibold">
             {currentIndex + 1} / {items.length}
           </span>
@@ -543,6 +564,15 @@ export const KnowledgeCarousel: React.FC = () => {
             <span className="text-[9px] text-white/60 font-mono">+{items.length - 15}</span>
           )}
         </div>
+      )}
+
+      {/* Wikipedia Verified Concept Modal */}
+      {activeWikiConcept && (
+        <WikiConceptModal
+          isOpen={Boolean(activeWikiConcept)}
+          onClose={() => setActiveWikiConcept(null)}
+          conceptQuery={activeWikiConcept}
+        />
       )}
     </div>
   );

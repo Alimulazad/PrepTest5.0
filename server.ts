@@ -72,6 +72,12 @@ import {
   createTopicService,
   getTaxonomyAuditLogsService,
 } from './server/services/taxonomyService.js';
+import {
+  fetchWikipediaSummary,
+  getWikipediaContextForPrompt,
+  getEnrichedWikipediaRAG,
+} from './server/services/wikipediaService.js';
+import { wikiRouter } from './server/routes/wiki.js';
 import { uploadQuestionImages, uploadSingleImage } from './server/utils/upload.js';
 import { logger } from './server/utils/logger.js';
 import {
@@ -203,6 +209,14 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
 
   if (!token) {
     return res.status(401).json({ error: 'অনুগ্রহ করে লগইন করুন (Authentication required)' });
+  }
+
+  // Handle guest / offline token
+  if (token.startsWith('guest_token_')) {
+    req.userId = 'guest_user';
+    req.userPhone = '01700000000';
+    req.userRole = 'student';
+    return next();
   }
 
   jwt.verify(token, EFFECTIVE_JWT_SECRET, (err: any, decoded: any) => {
@@ -366,6 +380,25 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
 // GET /api/auth/me (Verify active session)
 app.get('/api/auth/me', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
+    if (req.userId === 'guest_user') {
+      return res.json({
+        success: true,
+        user: {
+          id: 'guest_user',
+          phone: '01700000000',
+          name: 'অতিথি শিক্ষার্থী',
+          target_university: 'du_a',
+          target_unit: "'ক' ইউনিট (বিজ্ঞান)",
+          exam_year: 'HSC-26',
+          college: 'ঢাকা কলেজ',
+          avatar: '🧑‍🎓',
+          avatar_color: '#FF6B00',
+          created_at: Date.now(),
+        },
+        progress: null,
+      });
+    }
+
     const user = await getUserById(req.userId!);
     if (!user) {
       return res.status(404).json({ error: 'ব্যবহারকারী পাওয়া যায়নি' });
@@ -2385,6 +2418,9 @@ app.get('/api/knowledge-snippets', async (req: Request, res: Response) => {
   }
 });
 
+// Mount Wikipedia Proxy Router (/api/wiki/summary)
+app.use('/api/wiki', wikiRouter);
+
 // ---------------- MULTI-API KEY TRACKING & FAILOVER ----------------
 
 interface KeyHealth {
@@ -2892,7 +2928,10 @@ app.post('/api/ai/chat', aiRateLimiter, async (req: Request, res: Response) => {
 
     const isSSE = stream === true || req.headers.accept?.includes('text/event-stream');
 
-    const systemInstruction = `You are "JACHAI AI" (যাচাই এআই - JACHAI Admission Mentor), a superfast, ultra-precise, highly adaptive, and intelligent Bangladesh University Admission & STEM Mentor (DU 'Ka', BUET, Medical, GST, CU, RU, JU, Agricultural).
+    // Retrieve verified Wikipedia RAG context (non-blocking with fast timeout)
+    const wikiRAG = await getEnrichedWikipediaRAG(prompt);
+
+    const baseSystemInstruction = `You are "JACHAI AI" (যাচাই এআই - JACHAI Admission Mentor), a superfast, ultra-precise, highly adaptive, and intelligent Bangladesh University Admission & STEM Mentor (DU 'Ka', BUET, Medical, GST, CU, RU, JU, Agricultural).
 
 CRITICAL DIRECTIVE: ADAPTIVE RESPONSE LENGTH & STYLE
 Be extremely direct, concise, and proportional to what the student asks. Never waste time or output walls of text for simple inquiries.
@@ -2920,6 +2959,10 @@ STRICT FORMATTING & LATEX RULES:
 - Always respond in natural, crisp Bengali (বাংলা).
 - LaTeX Formatting: ALWAYS format mathematical symbols and formulas with valid LaTeX enclosed in $...$ (inline) or $$...$$ (block), e.g. $F = ma$, $\\vec{v} = \\vec{u} + \\vec{a}t$, $E_k = \\frac{1}{2}mv^2$.
 - No filler greetings like "আশা করি তুমি ভালো আছো..." before simple answers. Go straight to the point.`;
+
+    const systemInstruction = wikiRAG.contextText
+      ? `${baseSystemInstruction}\n\n${wikiRAG.contextText}`
+      : baseSystemInstruction;
 
     const effectiveModel = model === 'custom' && customModelName ? customModelName.trim() : (model || 'openrouter/free');
     const isExplicitOpenRouter = provider === 'openrouter' || effectiveModel.includes('/') || effectiveModel === 'custom';
@@ -3014,7 +3057,14 @@ STRICT FORMATTING & LATEX RULES:
                 const trimmed = line.trim();
                 if (!trimmed || trimmed.startsWith(':')) continue;
                 if (trimmed === 'data: [DONE]') {
-                  res.write(`data: ${JSON.stringify({ done: true, modelUsed: effectiveModel, provider: 'openrouter' })}\n\n`);
+                  res.write(
+                    `data: ${JSON.stringify({
+                      done: true,
+                      modelUsed: effectiveModel,
+                      provider: 'openrouter',
+                      sources: wikiRAG.sources,
+                    })}\n\n`
+                  );
                   streamSucceeded = true;
                   return res.end();
                 }
@@ -3031,7 +3081,14 @@ STRICT FORMATTING & LATEX RULES:
               }
             }
 
-            res.write(`data: ${JSON.stringify({ done: true, modelUsed: effectiveModel, provider: 'openrouter' })}\n\n`);
+            res.write(
+              `data: ${JSON.stringify({
+                done: true,
+                modelUsed: effectiveModel,
+                provider: 'openrouter',
+                sources: wikiRAG.sources,
+              })}\n\n`
+            );
             streamSucceeded = true;
             return res.end();
           } catch (streamErr: any) {
@@ -3058,7 +3115,7 @@ STRICT FORMATTING & LATEX RULES:
       return res.json({
         text: result.text,
         reasoning: result.reasoning,
-        sources: [],
+        sources: wikiRAG.sources,
         modelUsed: effectiveModel,
         provider: 'openrouter',
       });
@@ -3074,12 +3131,12 @@ STRICT FORMATTING & LATEX RULES:
         res.flushHeaders?.();
         const fallbackText = `এখানে পদার্থবিজ্ঞান ও গণিতের একটি গুরুত্বপূর্ণ শর্টকাট কৌশল:\n$v = \\sqrt{2gh}$ ও $v_e = \\sqrt{\\frac{2GM}{R}}$ সূত্র দুটি ভার্সিটি 'ক' ইউনিটে প্রচুর আসে। মাত্রা সমীকরণ এবং একক নির্ভুলভাবে যাচাই করুন!`;
         res.write(`data: ${JSON.stringify({ text: fallbackText })}\n\n`);
-        res.write(`data: ${JSON.stringify({ done: true, modelUsed: 'offline-fallback', provider: 'gemini' })}\n\n`);
+        res.write(`data: ${JSON.stringify({ done: true, modelUsed: 'offline-fallback', provider: 'gemini', sources: wikiRAG.sources })}\n\n`);
         return res.end();
       }
       return res.json({
         text: `এখানে পদার্থবিজ্ঞান ও গণিতের একটি গুরুত্বপূর্ণ শর্টকাট কৌশল:\n$v = \\sqrt{2gh}$ ও $v_e = \\sqrt{\\frac{2GM}{R}}$ সূত্র দুটি ভার্সিটি 'ক' ইউনিটে প্রচুর আসে। মাত্রা সমীকরণ এবং একক নির্ভুলভাবে যাচাই করুন!`,
-        sources: [],
+        sources: wikiRAG.sources,
         modelUsed: 'offline-fallback',
         provider: 'gemini',
       });
@@ -3132,7 +3189,14 @@ STRICT FORMATTING & LATEX RULES:
             }
           }
 
-          res.write(`data: ${JSON.stringify({ done: true, modelUsed: geminiModelName, provider: 'gemini' })}\n\n`);
+          res.write(
+            `data: ${JSON.stringify({
+              done: true,
+              modelUsed: geminiModelName,
+              provider: 'gemini',
+              sources: wikiRAG.sources,
+            })}\n\n`
+          );
           streamDone = true;
           return res.end();
         } catch (gErr: any) {
@@ -3158,9 +3222,9 @@ STRICT FORMATTING & LATEX RULES:
         });
 
         const responseText = response.text || '';
-        
-        // Extract search grounding sources if present
-        const sources: { uri: string; title: string }[] = [];
+
+        // Extract search grounding sources if present and combine with wiki sources
+        const sources: { uri: string; title: string; snippet?: string }[] = [...wikiRAG.sources];
         const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
         if (chunks && Array.isArray(chunks)) {
           for (const chunk of chunks) {

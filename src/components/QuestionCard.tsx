@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { ChevronDown, ChevronUp, Bookmark, Flag, Eye, EyeOff, Sparkles, CheckCircle2, XCircle, X, AlertTriangle, Send, Loader2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Bookmark, Flag, Eye, EyeOff, Sparkles, CheckCircle2, XCircle, X, AlertTriangle, Send, Loader2, Globe } from 'lucide-react';
 import { Question } from '../types';
 import MathText from './MathText';
 import { reportQuestionApi } from '../services/api';
 import { OptimizedImage } from './common/OptimizedImage';
+import { WikiConceptModal } from './WikiConceptModal';
 
 export interface QuestionCardProps {
   question: Question;
@@ -49,6 +50,8 @@ const QuestionCardComponent: React.FC<QuestionCardProps> = ({
   const [isSubmittingReport, setIsSubmittingReport] = useState<boolean>(false);
   const [showReportToast, setShowReportToast] = useState<boolean>(false);
   const [reportToastMessage, setReportToastMessage] = useState<string>('রিপোর্ট গ্রহণ করা হয়েছে। ধন্যবাদ!');
+  const [showWikiModal, setShowWikiModal] = useState<boolean>(false);
+  const [wikiQuery, setWikiQuery] = useState<string>('');
 
   const selectedOption = controlledSelectedOption !== undefined ? controlledSelectedOption : internalSelectedOption;
   const isAnswered = selectedOption !== undefined && selectedOption !== null;
@@ -296,7 +299,27 @@ const QuestionCardComponent: React.FC<QuestionCardProps> = ({
         </div>
 
         {/* Right Side Action Buttons */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* Quick Wiki Concept Button */}
+          <button
+            type="button"
+            id={`btn-wiki-${question.id}`}
+            onClick={() => {
+              const queryCandidate =
+                question.chapter_name ||
+                (question.tags && question.tags.length > 0 ? question.tags[0] : '') ||
+                question.question_text.slice(0, 30);
+              setWikiQuery(queryCandidate);
+              setShowWikiModal(true);
+            }}
+            aria-label="উইকিপিডিয়া রেফারেন্স দেখুন"
+            className="flex items-center gap-1 px-2 py-1 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-800 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800/60 rounded-lg text-[11px] font-semibold transition-colors duration-150 cursor-pointer shadow-2xs"
+            title="উইকিপিডিয়া থেকে যাচাইকৃত কনসেপ্ট জানুন"
+          >
+            <Globe className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+            <span className="hidden sm:inline">উইকি কনসেপ্ট</span>
+          </button>
+
           {/* Ask AI Tutor if available */}
           {onAskAI && (
             <button
@@ -453,6 +476,23 @@ const QuestionCardComponent: React.FC<QuestionCardProps> = ({
           {reportToastMessage}
         </div>
       )}
+
+      {/* Wikipedia Verified Knowledge Modal */}
+      <WikiConceptModal
+        isOpen={showWikiModal}
+        onClose={() => setShowWikiModal(false)}
+        conceptQuery={wikiQuery}
+        onAskAIWithConcept={
+          onAskAI
+            ? (title) => {
+                onAskAI({
+                  ...question,
+                  question_text: `[টপিক: ${title}] ${question.question_text}`,
+                });
+              }
+            : undefined
+        }
+      />
     </div>
   );
 };

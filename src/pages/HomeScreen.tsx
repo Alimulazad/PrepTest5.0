@@ -34,6 +34,7 @@ import { UNIVERSITIES_DATA, INITIAL_QUESTIONS } from '../data/admissionData';
 import QuestionCard from '../components/QuestionCard';
 import WeakTopicsCard from '../components/WeakTopicsCard';
 import KnowledgeCarousel from '../components/KnowledgeCarousel';
+import { WikiKnowledgeExplorer } from '../components/WikiKnowledgeExplorer';
 
 interface HomeScreenProps {
   progress: UserProgress;
@@ -326,6 +327,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         maxTopics={2}
         onPracticeTopic={(chapterId) => onPracticeTopic && onPracticeTopic(chapterId)}
         onAskAIAboutTopic={(topicName) => onAskAIAboutTopic && onAskAIAboutTopic(topicName)}
+      />
+
+      {/* Wikipedia Verified Concept Explorer & Knowledge Hub */}
+      <WikiKnowledgeExplorer
+        onAskAI={(title, prompt) => {
+          if (onAskAIAboutTopic) {
+            onAskAIAboutTopic(title);
+          } else {
+            onOpenAITutor();
+          }
+        }}
       />
 
       {/* 5. Target University & Points Stats Card */}

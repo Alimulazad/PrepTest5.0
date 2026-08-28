@@ -27,6 +27,7 @@ import {
   ShieldCheck,
   RefreshCw,
   Sliders,
+  Globe,
 } from 'lucide-react';
 import { ChatMessage, Question, AIModelOption } from '../types';
 import {
@@ -51,6 +52,7 @@ import {
   getGoogleAccessToken,
 } from '../services/googleWorkspace';
 import GoogleCalendarSyncModal from './GoogleCalendarSyncModal';
+import { WikiConceptModal } from './WikiConceptModal';
 import MathText from './MathText';
 import 'katex/dist/katex.min.css';
 
@@ -88,6 +90,7 @@ export const ChorchaAITutor: React.FC<ChorchaAITutorProps> = ({
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [showCalendarModal, setShowCalendarModal] = useState<boolean>(false);
+  const [activeWikiConcept, setActiveWikiConcept] = useState<string | null>(null);
 
   // Model selection state
   const [availableModels, setAvailableModels] = useState<AIModelOption[]>([]);
@@ -517,6 +520,19 @@ export const ChorchaAITutor: React.FC<ChorchaAITutorProps> = ({
           </div>
 
           <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+            {/* Quick Wiki Explorer Button */}
+            <button
+              id="btn-header-wiki-search"
+              type="button"
+              onClick={() => setActiveWikiConcept('আদর্শ গ্যাস')}
+              aria-label="উইকিপিডিয়া যাচাইকৃত কনসেপ্ট খুঁজুন"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200/80 transition-colors cursor-pointer"
+              title="উইকিপিডিয়া কনসেপ্ট ও সূত্র খুঁজুন"
+            >
+              <Globe className="w-4 h-4 text-emerald-600" />
+              <span className="hidden sm:inline">উইকি কনসেপ্ট</span>
+            </button>
+
             {/* Google Calendar Sync Modal Button */}
             <button
               id="btn-header-calendar-sync"
@@ -656,26 +672,48 @@ export const ChorchaAITutor: React.FC<ChorchaAITutorProps> = ({
                     <MathText text={msg.content} />
                   </div>
 
-                  {/* Google Search Grounding references */}
+                  {/* Google Search & Wikipedia Grounding references */}
                   {msg.groundingSources && msg.groundingSources.length > 0 && (
                     <div className="mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-700">
                       <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1.5 flex items-center gap-1.5">
-                        <Search className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                        <span>সার্চ রেফারেন্স ও সোর্স:</span>
+                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                        <span>যাচাইকৃত তথ্য ও রেফারেন্স উৎস:</span>
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        {msg.groundingSources.map((source, sIdx) => (
-                          <a
-                            key={sIdx}
-                            href={source.uri}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 dark:bg-slate-700/80 hover:bg-blue-50 dark:hover:bg-blue-950/60 text-slate-700 dark:text-slate-200 hover:text-blue-700 dark:hover:text-blue-300 rounded-lg text-xs border border-slate-200 dark:border-slate-700 transition-colors"
-                          >
-                            <span className="truncate max-w-[200px]">{source.title}</span>
-                            <ExternalLink className="w-3 h-3 shrink-0 opacity-70" />
-                          </a>
-                        ))}
+                        {msg.groundingSources.map((source, sIdx) => {
+                          const isWiki = source.uri.includes('wikipedia.org') || source.title.toLowerCase().includes('উইকিপিডিয়া') || source.title.toLowerCase().includes('wikipedia');
+                          const cleanWikiTitle = source.title.replace(/^উইকিপিডিয়া:\s*/i, '');
+                          
+                          if (isWiki) {
+                            return (
+                              <button
+                                key={sIdx}
+                                type="button"
+                                onClick={() => setActiveWikiConcept(cleanWikiTitle)}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs border transition-all bg-slate-50 dark:bg-slate-800/90 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-slate-800 dark:text-slate-100 hover:text-emerald-700 dark:hover:text-emerald-300 border-slate-200 dark:border-slate-700 hover:border-emerald-300 shadow-2xs cursor-pointer active:scale-95"
+                                title="অ্যাপে উইকিপিডিয়া কনসেপ্ট প্রিভিউ দেখুন"
+                              >
+                                <Globe className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                                <span className="truncate max-w-[220px] font-medium">{source.title}</span>
+                                <ExternalLink className="w-3 h-3 shrink-0 opacity-70 text-emerald-600 dark:text-emerald-400" />
+                              </button>
+                            );
+                          }
+
+                          return (
+                            <a
+                              key={sIdx}
+                              href={source.uri}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs border transition-colors bg-slate-100 dark:bg-slate-700/80 hover:bg-blue-50 dark:hover:bg-blue-950/60 text-slate-700 dark:text-slate-200 hover:text-blue-700 dark:hover:text-blue-300 border-slate-200 dark:border-slate-700"
+                            >
+                              <Search className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
+                              <span className="truncate max-w-[220px] font-medium">{source.title}</span>
+                              <ExternalLink className="w-3 h-3 shrink-0 opacity-70" />
+                            </a>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -1024,6 +1062,18 @@ export const ChorchaAITutor: React.FC<ChorchaAITutorProps> = ({
         <GoogleCalendarSyncModal
           isOpen={showCalendarModal}
           onClose={() => setShowCalendarModal(false)}
+        />
+      )}
+
+      {/* Interactive Wikipedia Concept Preview Modal */}
+      {activeWikiConcept && (
+        <WikiConceptModal
+          isOpen={Boolean(activeWikiConcept)}
+          onClose={() => setActiveWikiConcept(null)}
+          conceptQuery={activeWikiConcept}
+          onAskAIWithConcept={(conceptTitle) => {
+            setInputText(`"${conceptTitle}" সম্পর্কিত মূল সূত্র, শর্ত এবং বিগত বছরের ভর্তি পরীক্ষার শর্টকাট কৌশলগুলো বুঝিয়ে দাও।`);
+          }}
         />
       )}
     </div>

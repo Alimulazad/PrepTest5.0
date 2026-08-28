@@ -358,12 +358,28 @@ export async function fetchCurrentUserApi(): Promise<AuthResponse | null> {
   const token = getAuthToken();
   if (!token) return null;
 
+  // Handle guest token immediately without network delay
+  if (token.startsWith('guest_token_')) {
+    const user = getStoredUser();
+    const progress = getSavedUserData();
+    if (user) {
+      return { token, user, progress };
+    }
+  }
+
   try {
-    const response = await fetchWithRetry(getApiUrl('/api/auth/me'), {
-      headers: {
-        Authorization: `Bearer ${token}`,
+    const response = await fetchWithRetry(
+      getApiUrl('/api/auth/me'),
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       },
-    });
+      {
+        timeoutMs: 6000,
+        maxRetries: 1,
+      }
+    );
 
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) {
@@ -381,7 +397,12 @@ export async function fetchCurrentUserApi(): Promise<AuthResponse | null> {
     }
     return { token, user: data.user, progress: data.progress };
   } catch (e) {
-    console.error('Fetch current user error:', e);
+    console.warn('Fetch current user notice (falling back to local cache):', e);
+    const localUser = getStoredUser();
+    const localProgress = getSavedUserData();
+    if (localUser) {
+      return { token, user: localUser, progress: localProgress };
+    }
     return null;
   }
 }
@@ -421,12 +442,23 @@ export async function fetchUserProgressFromBackend(): Promise<UserProgress | nul
   const token = getAuthToken();
   if (!token) return null;
 
+  if (token.startsWith('guest_token_')) {
+    return getSavedUserData();
+  }
+
   try {
-    const response = await fetchWithRetry(getApiUrl('/api/user/progress'), {
-      headers: {
-        Authorization: `Bearer ${token}`,
+    const response = await fetchWithRetry(
+      getApiUrl('/api/user/progress'),
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       },
-    });
+      {
+        timeoutMs: 5000,
+        maxRetries: 1,
+      }
+    );
 
     if (!response.ok) return null;
     const progress = await response.json();
@@ -438,20 +470,33 @@ export async function fetchUserProgressFromBackend(): Promise<UserProgress | nul
 }
 
 export async function syncUserProgressToBackend(progress: UserProgress): Promise<void> {
+  // Always update local storage first
+  saveUserData(progress);
+
   const token = getAuthToken();
   if (!token) return;
 
+  // Guest users store purely in local storage
+  if (token.startsWith('guest_token_')) return;
+
   try {
-    await fetchWithRetry(getApiUrl('/api/user/progress'), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
+    await fetchWithRetry(
+      getApiUrl('/api/user/progress'),
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(progress),
       },
-      body: JSON.stringify(progress),
-    });
+      {
+        timeoutMs: 5000,
+        maxRetries: 1,
+      }
+    );
   } catch (e) {
-    console.error('Failed to sync progress to SQLite database', e);
+    console.warn('Sync progress to backend notice (saved locally in browser storage):', e);
   }
 }
 
@@ -2196,6 +2241,22 @@ export async function fetchTopicStatsApi(): Promise<{
     throw new Error(data.error || 'টপিক পরিসংখ্যান লোড করতে ব্যর্থ');
   }
   return data;
+}
+
+// ---------------- Wikipedia Knowledge Integration API ----------------
+export {
+  type WikiSummaryData,
+  type WikiApiResponse,
+  fetchWikiSummary,
+  fetchWikiSummaryDetails,
+} from './wikiService';
+import { fetchWikiSummaryDetails, WikiSummaryData } from './wikiService';
+
+export async function fetchWikipediaSummaryApi(
+  query: string,
+  lang: 'bn' | 'en' = 'bn'
+): Promise<WikiSummaryData | null> {
+  return fetchWikiSummaryDetails(query, lang);
 }
 
 
