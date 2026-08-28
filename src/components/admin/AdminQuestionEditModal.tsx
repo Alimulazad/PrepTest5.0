@@ -35,7 +35,9 @@ export const AdminQuestionEditModal: React.FC<AdminQuestionEditModalProps> = ({
   const [questionImageFile, setQuestionImageFile] = useState<File | null>(null);
   const [questionImagePreview, setQuestionImagePreview] = useState<string>(question.question_image_url || '');
   const [explanationImageFile, setExplanationImageFile] = useState<File | null>(null);
-  const [explanationImagePreview, setExplanationImagePreview] = useState<string>(question.explanation_image_url || '');
+  const [explanationImagePreview, setExplanationImagePreview] = useState<string>(
+    question.explanation_image_url || (Array.isArray((question as any).explanation_image_urls) ? (question as any).explanation_image_urls[0] : '') || ''
+  );
 
   const qFileInputRef = useRef<HTMLInputElement>(null);
   const expFileInputRef = useRef<HTMLInputElement>(null);

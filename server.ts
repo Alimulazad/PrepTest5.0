@@ -1742,9 +1742,9 @@ app.get('/api/written-questions/:id', async (req: Request, res: Response) => {
 });
 
 // POST /api/written-questions (Protected Admin)
-app.post('/api/written-questions', authenticateAdmin, async (req: Request, res: Response) => {
+app.post('/api/written-questions', authenticateAdmin, uploadQuestionImages, async (req: Request, res: Response) => {
   try {
-    const body = req.body;
+    const body = extractQuestionDataFromRequest(req);
     if (!body.question_text || !body.explanation) {
       return res.status(400).json({ error: 'Question text and explanation are required' });
     }
@@ -1758,10 +1758,10 @@ app.post('/api/written-questions', authenticateAdmin, async (req: Request, res: 
 });
 
 // PUT /api/written-questions/:id (Protected Admin)
-app.put('/api/written-questions/:id', authenticateAdmin, async (req: Request, res: Response) => {
+app.put('/api/written-questions/:id', authenticateAdmin, uploadQuestionImages, async (req: Request, res: Response) => {
   try {
     const id = req.params.id;
-    const body = req.body;
+    const body = extractQuestionDataFromRequest(req);
 
     const updated = await updateWrittenQuestionInDb(id, body);
     if (!updated) {

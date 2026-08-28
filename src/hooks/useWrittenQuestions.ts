@@ -51,11 +51,12 @@ function buildWrittenQuestionsUrl(filters: WrittenQuestionFilters = {}): string 
   return getApiUrl(`/api/written-questions${queryString ? `?${queryString}` : ''}`);
 }
 
-function getAdminAuthHeaders(): Record<string, string> {
+function getAdminAuthHeaders(isFormData = false): Record<string, string> {
   const token = getAdminToken();
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
+  const headers: Record<string, string> = {};
+  if (!isFormData) {
+    headers['Content-Type'] = 'application/json';
+  }
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
@@ -120,13 +121,42 @@ export async function fetchWrittenQuestionById(id: string): Promise<WrittenQuest
 
 // Create written question (Admin)
 export async function createWrittenQuestionApi(
-  input: CreateWrittenQuestionInput
+  input: CreateWrittenQuestionInput,
+  files?: { questionImageFile?: File | null; explanationImageFile?: File | null }
 ): Promise<WrittenQuestion> {
-  const res = await fetchWithRetry(getApiUrl('/api/written-questions'), {
-    method: 'POST',
-    headers: getAdminAuthHeaders(),
-    body: JSON.stringify(input),
-  });
+  let res: Response;
+
+  if (files?.questionImageFile || files?.explanationImageFile) {
+    const formData = new FormData();
+    Object.entries(input).forEach(([key, val]) => {
+      if (val !== undefined && val !== null) {
+        if (typeof val === 'object') {
+          formData.append(key, JSON.stringify(val));
+        } else {
+          formData.append(key, String(val));
+        }
+      }
+    });
+
+    if (files.questionImageFile) {
+      formData.append('question_image', files.questionImageFile);
+    }
+    if (files.explanationImageFile) {
+      formData.append('explanation_image', files.explanationImageFile);
+    }
+
+    res = await fetchWithRetry(getApiUrl('/api/written-questions'), {
+      method: 'POST',
+      headers: getAdminAuthHeaders(true),
+      body: formData,
+    });
+  } else {
+    res = await fetchWithRetry(getApiUrl('/api/written-questions'), {
+      method: 'POST',
+      headers: getAdminAuthHeaders(false),
+      body: JSON.stringify(input),
+    });
+  }
 
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
@@ -139,13 +169,42 @@ export async function createWrittenQuestionApi(
 // Update written question (Admin)
 export async function updateWrittenQuestionApi(
   id: string,
-  input: UpdateWrittenQuestionInput
+  input: UpdateWrittenQuestionInput,
+  files?: { questionImageFile?: File | null; explanationImageFile?: File | null }
 ): Promise<WrittenQuestion> {
-  const res = await fetchWithRetry(getApiUrl(`/api/written-questions/${id}`), {
-    method: 'PUT',
-    headers: getAdminAuthHeaders(),
-    body: JSON.stringify(input),
-  });
+  let res: Response;
+
+  if (files?.questionImageFile || files?.explanationImageFile) {
+    const formData = new FormData();
+    Object.entries(input).forEach(([key, val]) => {
+      if (val !== undefined && val !== null) {
+        if (typeof val === 'object') {
+          formData.append(key, JSON.stringify(val));
+        } else {
+          formData.append(key, String(val));
+        }
+      }
+    });
+
+    if (files.questionImageFile) {
+      formData.append('question_image', files.questionImageFile);
+    }
+    if (files.explanationImageFile) {
+      formData.append('explanation_image', files.explanationImageFile);
+    }
+
+    res = await fetchWithRetry(getApiUrl(`/api/written-questions/${id}`), {
+      method: 'PUT',
+      headers: getAdminAuthHeaders(true),
+      body: formData,
+    });
+  } else {
+    res = await fetchWithRetry(getApiUrl(`/api/written-questions/${id}`), {
+      method: 'PUT',
+      headers: getAdminAuthHeaders(false),
+      body: JSON.stringify(input),
+    });
+  }
 
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
@@ -271,12 +330,25 @@ export function useWrittenQuestion(
  * Automatically invalidates query caches upon success.
  */
 export function useCreateWrittenQuestion(
-  options?: UseMutationOptions<WrittenQuestion, Error, CreateWrittenQuestionInput>
+  options?: UseMutationOptions<
+    WrittenQuestion,
+    Error,
+    CreateWrittenQuestionInput | { input: CreateWrittenQuestionInput; files?: { questionImageFile?: File | null; explanationImageFile?: File | null } }
+  >
 ) {
   const queryClient = useQueryClient();
 
-  return useMutation<WrittenQuestion, Error, CreateWrittenQuestionInput>({
-    mutationFn: createWrittenQuestionApi,
+  return useMutation<
+    WrittenQuestion,
+    Error,
+    CreateWrittenQuestionInput | { input: CreateWrittenQuestionInput; files?: { questionImageFile?: File | null; explanationImageFile?: File | null } }
+  >({
+    mutationFn: (param) => {
+      if ('input' in param) {
+        return createWrittenQuestionApi(param.input, param.files);
+      }
+      return createWrittenQuestionApi(param);
+    },
     ...options,
     onSuccess: (newQuestion, variables, context) => {
       // Invalidate all written questions list queries
@@ -294,7 +366,7 @@ export function useUpdateWrittenQuestion(
   options?: UseMutationOptions<
     WrittenQuestion,
     Error,
-    { id: string; input: UpdateWrittenQuestionInput }
+    { id: string; input: UpdateWrittenQuestionInput; files?: { questionImageFile?: File | null; explanationImageFile?: File | null } }
   >
 ) {
   const queryClient = useQueryClient();
@@ -302,9 +374,9 @@ export function useUpdateWrittenQuestion(
   return useMutation<
     WrittenQuestion,
     Error,
-    { id: string; input: UpdateWrittenQuestionInput }
+    { id: string; input: UpdateWrittenQuestionInput; files?: { questionImageFile?: File | null; explanationImageFile?: File | null } }
   >({
-    mutationFn: ({ id, input }) => updateWrittenQuestionApi(id, input),
+    mutationFn: ({ id, input, files }) => updateWrittenQuestionApi(id, input, files),
     ...options,
     onSuccess: (updatedQuestion, variables, context) => {
       // Update individual item cache

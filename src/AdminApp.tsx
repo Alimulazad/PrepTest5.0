@@ -198,9 +198,12 @@ export const AdminApp: React.FC = () => {
   };
 
   // Question CRUD handlers
-  const handleCreateQuestion = async (q: Partial<Question>) => {
+  const handleCreateQuestion = async (
+    q: Partial<Question>,
+    files?: { questionImageFile?: File | null; explanationImageFile?: File | null }
+  ) => {
     try {
-      await createQuestion(q);
+      await createQuestion(q, files);
       toast.success('নতুন প্রশ্ন যুক্ত হয়েছে');
       loadAllAdminData();
     } catch (err: any) {
@@ -208,9 +211,13 @@ export const AdminApp: React.FC = () => {
     }
   };
 
-  const handleUpdateQuestion = async (id: string, q: Partial<Question>) => {
+  const handleUpdateQuestion = async (
+    id: string,
+    q: Partial<Question>,
+    files?: { questionImageFile?: File | null; explanationImageFile?: File | null }
+  ) => {
     try {
-      await updateQuestion(id, q);
+      await updateQuestion(id, q, files);
       toast.success('প্রশ্ন আপডেট করা হয়েছে');
       loadAllAdminData();
     } catch (err: any) {

@@ -300,7 +300,7 @@ export const AdminQuestionsTab: React.FC<AdminQuestionsTabProps> = ({
           await createWrittenQuestionApi({
             ...data,
             type: 'written',
-          } as any);
+          } as any, files);
         }
         setNotification({ text: 'নতুন প্রশ্ন সফলভাবে লাইভ ডেটাবেজে যুক্ত হয়েছে!', type: 'success' });
       } else if (modalState.question?.id) {
@@ -309,7 +309,7 @@ export const AdminQuestionsTab: React.FC<AdminQuestionsTabProps> = ({
         } else {
           await updateWrittenQuestionApi(modalState.question.id, {
             ...data,
-          } as any);
+          } as any, files);
         }
         setNotification({ text: 'প্রশ্ন সফলভাবে আপডেট করা হয়েছে!', type: 'success' });
       }

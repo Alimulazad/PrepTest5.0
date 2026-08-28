@@ -3132,7 +3132,12 @@ export async function getWrittenQuestionById(id: string): Promise<WrittenQuestio
 export async function insertWrittenQuestion(q: Partial<WrittenQuestion>): Promise<WrittenQuestion> {
   const now = Date.now();
   const id = q.id || `wq_${q.subject_id || 'sub'}_${now}_${Math.random().toString(36).substring(2, 6)}`;
-  
+
+  const expImgUrls = Array.isArray(q.explanation_image_urls) && q.explanation_image_urls.length > 0
+    ? q.explanation_image_urls
+    : (q.explanation_image_url ? [q.explanation_image_url] : []);
+  const expImgUrl = q.explanation_image_url || (expImgUrls.length > 0 ? expImgUrls[0] : undefined);
+
   const item: WrittenQuestion = {
     id,
     subject_id: q.subject_id || 'physics_2',
@@ -3147,7 +3152,8 @@ export async function insertWrittenQuestion(q: Partial<WrittenQuestion>): Promis
     question_image_url: q.question_image_url,
     explanation: q.explanation || (q as any).answer_text || '',
     explanation_latex: q.explanation_latex,
-    explanation_image_urls: q.explanation_image_urls || [],
+    explanation_image_url: expImgUrl,
+    explanation_image_urls: expImgUrls,
     tags: Array.isArray(q.tags) ? q.tags : [],
     category: q.category || 'varsity_a',
     difficulty: (q.difficulty as any) || 'medium',
@@ -3219,10 +3225,18 @@ export async function updateWrittenQuestionInDb(id: string, q: Partial<WrittenQu
   if (!existing) return null;
 
   const now = Date.now();
+  let expImgUrls = Array.isArray(q.explanation_image_urls) ? q.explanation_image_urls : (existing.explanation_image_urls || []);
+  if (q.explanation_image_url && !expImgUrls.includes(q.explanation_image_url)) {
+    expImgUrls = [q.explanation_image_url, ...expImgUrls];
+  }
+  const expImgUrl = q.explanation_image_url || (expImgUrls.length > 0 ? expImgUrls[0] : existing.explanation_image_url);
+
   const updated: WrittenQuestion = {
     ...existing,
     ...q,
     id,
+    explanation_image_url: expImgUrl,
+    explanation_image_urls: expImgUrls,
     updated_at: now,
   };
 
