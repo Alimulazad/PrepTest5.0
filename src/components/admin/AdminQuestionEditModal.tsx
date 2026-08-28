@@ -311,49 +311,53 @@ export const AdminQuestionEditModal: React.FC<AdminQuestionEditModalProps> = ({
           </div>
 
           {/* Options Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {(['A', 'B', 'C', 'D'] as const).map((opt) => (
-              <div key={opt} className="space-y-1">
-                <label className="text-xs font-semibold text-slate-600 flex items-center justify-between">
-                  <span>অপশন ({opt === 'A' ? 'ক' : opt === 'B' ? 'খ' : opt === 'C' ? 'গ' : 'ঘ'})</span>
-                  {formData.correct_ans === opt && (
-                    <span className="text-emerald-600 font-bold text-[11px] flex items-center gap-0.5">
-                      <Check className="w-3 h-3" /> সঠিক উত্তর
-                    </span>
-                  )}
-                </label>
-                <input
-                  type="text"
-                  value={formData.options?.[opt] || ''}
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      options: { ...formData.options, [opt]: e.target.value } as any,
-                    })
-                  }
-                  required
-                  placeholder={`অপশন ${opt}`}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs text-slate-900 bg-white placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
-                />
-              </div>
-            ))}
-          </div>
+          {formData.type !== 'written' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {(['A', 'B', 'C', 'D'] as const).map((opt) => (
+                <div key={opt} className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-600 flex items-center justify-between">
+                    <span>অপশন ({opt === 'A' ? 'ক' : opt === 'B' ? 'খ' : opt === 'C' ? 'গ' : 'ঘ'})</span>
+                    {formData.correct_ans === opt && (
+                      <span className="text-emerald-600 font-bold text-[11px] flex items-center gap-0.5">
+                        <Check className="w-3 h-3" /> সঠিক উত্তর
+                      </span>
+                    )}
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.options?.[opt] || ''}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        options: { ...formData.options, [opt]: e.target.value } as any,
+                      })
+                    }
+                    required={formData.type !== 'written'}
+                    placeholder={`অপশন ${opt}`}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs text-slate-900 bg-white placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
+                  />
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Correct Answer & Settings */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label className="text-xs font-semibold text-slate-600 block mb-1">সঠিক উত্তর</label>
-              <select
-                value={formData.correct_ans || 'A'}
-                onChange={(e) => setFormData({ ...formData, correct_ans: e.target.value as any })}
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs text-slate-900 bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
-              >
-                <option value="A">অপশন A (ক)</option>
-                <option value="B">অপশন B (খ)</option>
-                <option value="C">অপশন C (গ)</option>
-                <option value="D">অপশন D (ঘ)</option>
-              </select>
-            </div>
+          <div className={`grid grid-cols-1 ${formData.type === 'written' ? 'sm:grid-cols-2' : 'sm:grid-cols-3'} gap-3`}>
+            {formData.type !== 'written' && (
+              <div>
+                <label className="text-xs font-semibold text-slate-600 block mb-1">সঠিক উত্তর</label>
+                <select
+                  value={formData.correct_ans || 'A'}
+                  onChange={(e) => setFormData({ ...formData, correct_ans: e.target.value as any })}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs text-slate-900 bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
+                >
+                  <option value="A">অপশন A (ক)</option>
+                  <option value="B">অপশন B (খ)</option>
+                  <option value="C">অপশন C (গ)</option>
+                  <option value="D">অপশন D (ঘ)</option>
+                </select>
+              </div>
+            )}
 
             <div>
               <label className="text-xs font-semibold text-slate-600 block mb-1">ক্যাটাগরি</label>
@@ -388,7 +392,7 @@ export const AdminQuestionEditModal: React.FC<AdminQuestionEditModalProps> = ({
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="text-xs font-bold text-slate-700">
-                ব্যাখ্যা ও শর্টকাট টেকনিক (বাংলা, LaTeX ও TikZ)
+                {formData.type === 'written' ? 'লিখিত সমাধান/উত্তর (Detailed Solution)' : 'ব্যাখ্যা ও শর্টকাট টেকনিক (বাংলা, LaTeX ও TikZ)'}
               </label>
               <div className="flex items-center gap-1.5 text-[11px]">
                 <button
