@@ -431,13 +431,13 @@ function findKeyValue(row: Record<string, any>, possibleKeys: string[]): any {
  * Parse Excel (.xlsx, .xls) and CSV files into standard questions list
  */
 export async function parseExcelOrCsvFile(
-  file: File | ArrayBuffer,
+  file: File | ArrayBuffer | string,
   defaults?: BulkDefaults,
   importType?: 'mcq' | 'written' | 'topic' | 'knowledge_snippet'
 ): Promise<BulkParseResult> {
   const errors: string[] = [];
   try {
-    let data: ArrayBuffer;
+    let data: ArrayBuffer | string;
     let fileName = '';
     if (file instanceof File) {
       fileName = file.name.toLowerCase();
@@ -446,32 +446,39 @@ export async function parseExcelOrCsvFile(
       data = file;
     }
 
-    // Check magic bytes to detect binary XLSX/XLS vs UTF-8 Text/CSV
-    const byteView = new Uint8Array(data.slice(0, 4));
-    const isZipOrXlsx = byteView[0] === 0x50 && byteView[1] === 0x4b;
-    const isOldXls = byteView[0] === 0xd0 && byteView[1] === 0xcf;
-
     let workbook: XLSX.WorkBook;
 
-    if (!isZipOrXlsx && !isOldXls) {
-      // Plain text CSV / TSV / TXT - Decode with UTF-8 to prevent Bengali Mojibake
-      const decoder = new TextDecoder('utf-8');
-      let textContent = decoder.decode(data);
-      if (textContent.charCodeAt(0) === 0xfeff) {
-        textContent = textContent.slice(1);
-      }
-      workbook = XLSX.read(textContent, {
+    if (typeof data === 'string') {
+      workbook = XLSX.read(data, {
         type: 'string',
         raw: false,
       });
     } else {
-      // Binary Excel file (.xlsx / .xls)
-      workbook = XLSX.read(data, {
-        type: 'array',
-        cellDates: false,
-        raw: false,
-        codepage: 65001,
-      });
+      // Check magic bytes to detect binary XLSX/XLS vs UTF-8 Text/CSV
+      const byteView = new Uint8Array(data.slice(0, 4));
+      const isZipOrXlsx = byteView[0] === 0x50 && byteView[1] === 0x4b;
+      const isOldXls = byteView[0] === 0xd0 && byteView[1] === 0xcf;
+
+      if (!isZipOrXlsx && !isOldXls) {
+        // Plain text CSV / TSV / TXT - Decode with UTF-8 to prevent Bengali Mojibake
+        const decoder = new TextDecoder('utf-8');
+        let textContent = decoder.decode(data);
+        if (textContent.charCodeAt(0) === 0xfeff) {
+          textContent = textContent.slice(1);
+        }
+        workbook = XLSX.read(textContent, {
+          type: 'string',
+          raw: false,
+        });
+      } else {
+        // Binary Excel file (.xlsx / .xls)
+        workbook = XLSX.read(data, {
+          type: 'array',
+          cellDates: false,
+          raw: false,
+          codepage: 65001,
+        });
+      }
     }
 
     const firstSheetName = workbook.SheetNames[0];
@@ -1188,3 +1195,33 @@ export function downloadKnowledgeSnippetJsonTemplate() {
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
 }
+
+export function isCsvFormat(text: string): boolean {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  if (lines.length === 0) return false;
+  
+  const firstLine = lines[0].toLowerCase();
+  
+  // Look for signature headers
+  const csvHeaders = [
+    'subject_id', 'subject_name', 'chapter_id', 'chapter_name', 'topic_id', 'topic_name', 
+    'question_text', 'question_number', 'question_image_url', 'explanation', 'correct_ans',
+    'option_a', 'option_b', 'option_c', 'option_d', 'category', 'difficulty', 'star_rating',
+    'tags', 'type'
+  ];
+  
+  // If the first line has at least 2 headers, or 1 clear signature header with commas
+  const foundHeaders = csvHeaders.filter(header => firstLine.includes(header));
+  if (foundHeaders.length >= 2) {
+    return true;
+  }
+  
+  // Or check if the first line has a comma, semicolon, or tab and contains 'question' or 'subject' or 'option'
+  if ((firstLine.includes(',') || firstLine.includes('\t') || firstLine.includes(';')) && 
+      (firstLine.includes('question') || firstLine.includes('subject') || firstLine.includes('option') || firstLine.includes('ans') || firstLine.includes('explanation'))) {
+    return true;
+  }
+  
+  return false;
+}
+

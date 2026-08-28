@@ -43,7 +43,8 @@ import {
   downloadTopicCsvTemplate,
   downloadTopicJsonTemplate,
   downloadKnowledgeSnippetCsvTemplate,
-  downloadKnowledgeSnippetJsonTemplate
+  downloadKnowledgeSnippetJsonTemplate,
+  isCsvFormat
 } from '../../utils/bulkQuestionParser';
 import { validateStrictJsonFormat } from '../../utils/jsonValidator';
 import {
@@ -994,10 +995,10 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
     }
   };
 
-  // 2. Handle Bengali Raw Text Parsing
-  const handleParseRawText = () => {
+  // 2. Handle Bengali Raw Text (or CSV Text) Parsing
+  const handleParseRawText = async () => {
     if (!rawBengaliTextInput.trim()) {
-      setParseErrors(['অনুগ্রহ করে টেক্সট বক্সে প্রশ্নাবলী পেস্ট করুন।']);
+      setParseErrors(['অনুগ্রহ করে টেক্সট বক্সে প্রশ্নাবলী বা CSV ডেটা পেস্ট করুন।']);
       return;
     }
 
@@ -1006,12 +1007,33 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
     setAutoCreateSuccessMsg(null);
 
     const defaults = getBulkDefaults();
-    const result = parseRawBengaliQuestions(rawBengaliTextInput, defaults);
 
-    if (!result.success || result.questions.length === 0) {
-      setParseErrors(result.errors.length ? result.errors : ['কোনো প্রশ্ন শনাক্ত করা যায়নি। সঠিক ফরম্যাটে প্রশ্ন দিন।']);
+    if (isCsvFormat(rawBengaliTextInput)) {
+      setIsProcessingFile(true);
+      try {
+        const result = await parseExcelOrCsvFile(rawBengaliTextInput, defaults, importType);
+        if (!result.success || result.questions.length === 0) {
+          setParseErrors(result.errors.length ? result.errors : ['কোনো CSV প্রশ্ন শনাক্ত করা যায়নি। সঠিক কলামের নাম ও ডাটা দিন।']);
+        } else {
+          setParsedQuestions(revalidateParsedItems(result.questions));
+        }
+      } catch (err: any) {
+        setParseErrors([`CSV পার্সিং ত্রুটি: ${err.message || 'অজানা সমস্যা'}`]);
+      } finally {
+        setIsProcessingFile(false);
+      }
     } else {
-      setParsedQuestions(revalidateParsedItems(result.questions));
+      if (importType === 'written') {
+        setParseErrors(['লিখিত (Written) প্রশ্নের জন্য শুধুমাত্র CSV ফরম্যাটের টেক্সট পেস্ট করা যাবে। অনুগ্রহ করে প্রথম লাইনে কলামের নামসহ CSV পেস্ট করুন।']);
+        return;
+      }
+      const result = parseRawBengaliQuestions(rawBengaliTextInput, defaults);
+
+      if (!result.success || result.questions.length === 0) {
+        setParseErrors(result.errors.length ? result.errors : ['কোনো প্রশ্ন শনাক্ত করা যায়নি। সঠিক ফরম্যাটে প্রশ্ন দিন।']);
+      } else {
+        setParsedQuestions(revalidateParsedItems(result.questions));
+      }
     }
   };
 
@@ -1655,7 +1677,7 @@ Ans: A
               <span>১. ফাইল আপলোড (Excel / CSV / JSON)</span>
             </button>
 
-            {importType === 'mcq' && (
+            {(importType === 'mcq' || importType === 'written') && (
               <button
                 type="button"
                 onClick={() => setActiveTab('text')}
@@ -1666,7 +1688,9 @@ Ans: A
                 }`}
               >
                 <FileText className="w-4 h-4" />
-                <span>২. টেক্সট পেস্ট (Raw Bengali Text Parser)</span>
+                <span>
+                  {importType === 'written' ? '২. লিখিত CSV পেস্ট (CSV Text Paste)' : '২. টেক্সট / CSV পেস্ট (Raw Text & CSV Parser)'}
+                </span>
               </button>
             )}
 
@@ -1734,33 +1758,57 @@ Ans: A
             </div>
           )}
 
-          {/* TAB 2: RAW BENGALI TEXT PARSER */}
-          {activeTab === 'text' && importType === 'mcq' && (
+          {/* TAB 2: RAW BENGALI TEXT / CSV PARSER */}
+          {activeTab === 'text' && (importType === 'mcq' || importType === 'written') && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-                    মাইক্রোসফট ওয়ার্ড বা টেক্সট থেকে সরাসরি MCQ প্রশ্ন পেস্ট করুন:
+                    {importType === 'written' 
+                      ? 'লিখিত (Written) প্রশ্নের CSV ডাটা সরাসরি পেস্ট করুন:' 
+                      : 'মাইক্রোসফট ওয়ার্ড বা টেক্সট বা CSV সরাসরি পেস্ট করুন:'}
                   </h3>
                   <p className="text-[11px] text-slate-500 mt-0.5">
-                    প্যাটার্ন: <code className="bg-slate-100 px-1 py-0.5 rounded text-indigo-700">১. প্রশ্ন... (ক) অপশন (খ) অপশন (গ) অপশন (ঘ) অপশন উত্তর: ক ব্যাখ্যা: ...</code>
+                    {importType === 'written' ? (
+                      <span>প্যাটার্ন: প্রথম লাইনে <code className="bg-slate-100 px-1 py-0.5 rounded text-indigo-700">subject_id,question_text,answer_text,...</code> হেডার দিয়ে কমা/ট্যাব সেপারেটেড ডাটা পেস্ট করুন।</span>
+                    ) : (
+                      <span>প্যাটার্ন: সাধারণ বাংলা প্রশ্ন বা কমা সেপারেটেড CSV ফরম্যাট (যেমন: <code className="bg-slate-100 px-1 py-0.5 rounded text-indigo-700">subject_id,question_text,option_a,...</code>)</span>
+                    )}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleLoadSampleBengaliText}
-                  className="px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-                  নমুনা টেক্সট পেস্ট করুন
-                </button>
+                {importType === 'mcq' && (
+                  <button
+                    type="button"
+                    onClick={handleLoadSampleBengaliText}
+                    className="px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                    নমুনা টেক্সট পেস্ট করুন
+                  </button>
+                )}
+                {importType === 'written' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const sampleWrittenCsv = `subject_id,question_text,answer_text,marks,difficulty,star_rating\nphysics_1,"একটি বস্তুকে উর্ধ্বমুখী $20 m/s$ বেগে নিক্ষেপ করা হলে তার সর্বোচ্চ উচ্চতা কত হবে?","সর্বোচ্চ উচ্চতা $H = \\frac{v^2}{2g} = \\frac{20^2}{2 \\times 9.8} = 20.41 m$।",5,medium,3\nchemistry_1,"পানির অণুর আকৃতি কেমন এবং কেন?","পানির অণুর আকৃতি কৌণিক বা উল্টানো V আকৃতির। অক্সিজেনের sp3 সংকরণ ঘটলেও দুটি নিঃসঙ্গ ইলেকট্রন যুগল (lone pair) এর বিকর্ষণের কারণে বন্ধন কোণ ১০৯.৫ ডিগ্রী থেকে হ্রাস পেয়ে ১০৪.৫ ডিগ্রী হয়।",5,easy,2`;
+                      setRawBengaliTextInput(sampleWrittenCsv);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                    নমুনা লিখিত CSV পেস্ট করুন
+                  </button>
+                )}
               </div>
 
               <textarea
                 value={rawBengaliTextInput}
                 onChange={(e) => setRawBengaliTextInput(e.target.value)}
-                placeholder="এখানে বাংলা বা ইংরেজি প্রশ্ন পেস্ট করুন...&#10;&#10;১. প্রশ্ন বাক্য...&#10;(ক) অপশন ১&#10;(খ) অপশন ২&#10;(গ) অপশন ৩&#10;(ঘ) অপশন ৪&#10;উত্তর: ক&#10;ব্যাখ্যা: সমাধানের বিস্তারিত ব্যাখ্যা..."
+                placeholder={importType === 'written' 
+                  ? "প্রথম লাইনে হেডার দিয়ে লিখিত প্রশ্নের CSV পেস্ট করুন...\n\nsubject_id,question_text,answer_text,marks,difficulty\nphysics_1,\"বলবিদ্যার মৌলিক সূত্রটি কী?\",\"F = ma\",5,easy"
+                  : "এখানে বাংলা বা ইংরেজি প্রশ্ন অথবা CSV পেস্ট করুন...\n\n১. প্রশ্ন বাক্য...\n(ক) অপশন ১\n(খ) অপশন ২\n(গ) অপশন ৩\n(ঘ) অপশন ৪\nউত্তর: ক\nব্যাখ্যা: সমাধানের বিস্তারিত ব্যাখ্যা..."
+                }
                 rows={8}
                 className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs font-mono text-slate-800 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-hidden leading-relaxed resize-y"
               />
@@ -1772,7 +1820,7 @@ Ans: A
                   className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
                 >
                   <Sparkles className="w-4 h-4" />
-                  স্বয়ংক্রিয়ভাবে টেক্সট পার্স করুন (Parse Raw Text)
+                  স্বয়ংক্রিয়ভাবে টেক্সট/CSV পার্স করুন (Parse Text/CSV)
                 </button>
               </div>
             </div>
