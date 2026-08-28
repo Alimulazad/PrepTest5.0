@@ -192,6 +192,77 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
         setFetchedWrittenQuestions([]);
       });
   }, []);
+ 
+  // Hide Top and Bottom Navbars when in QuestionBankScreen & hide AI floating button while scrolling
+  useEffect(() => {
+    // Create and append style element dynamically
+    const styleEl = document.createElement('style');
+    styleEl.id = 'hide-navbars-qb-styles';
+    styleEl.innerHTML = `
+      .hide-navbars-on-qb header,
+      .hide-navbars-on-qb nav {
+        display: none !important;
+      }
+      .hide-navbars-on-qb main {
+        padding-top: 8px !important;
+      }
+      .hide-navbars-on-qb .pb-20,
+      .hide-navbars-on-qb .sm\\:pb-24 {
+        padding-bottom: 12px !important;
+      }
+    `;
+    document.head.appendChild(styleEl);
+ 
+    let isScrollingTimeout: NodeJS.Timeout | number;
+ 
+    const handleScroll = () => {
+      const fab = document.getElementById('moveable-ai-fab');
+      if (fab) {
+        fab.style.transition = 'opacity 0.15s ease-in-out, visibility 0.15s';
+        fab.style.opacity = '0';
+        fab.style.pointerEvents = 'none';
+      }
+ 
+      clearTimeout(isScrollingTimeout);
+ 
+      isScrollingTimeout = setTimeout(() => {
+        const fabToShow = document.getElementById('moveable-ai-fab');
+        if (fabToShow) {
+          fabToShow.style.opacity = '1';
+          fabToShow.style.pointerEvents = 'auto';
+        }
+      }, 150);
+    };
+ 
+    window.addEventListener('scroll', handleScroll, { passive: true });
+ 
+    return () => {
+      document.body.classList.remove('hide-navbars-on-qb');
+      const styleToRemove = document.getElementById('hide-navbars-qb-styles');
+      if (styleToRemove) {
+        styleToRemove.remove();
+      }
+      window.removeEventListener('scroll', handleScroll);
+      clearTimeout(isScrollingTimeout);
+      const fabToRestore = document.getElementById('moveable-ai-fab');
+      if (fabToRestore) {
+        fabToRestore.style.opacity = '1';
+        fabToRestore.style.pointerEvents = 'auto';
+      }
+    };
+  }, []);
+
+  // Dynamically add/remove hide-navbars-on-qb based on selectedSubject
+  useEffect(() => {
+    if (selectedSubject) {
+      document.body.classList.add('hide-navbars-on-qb');
+    } else {
+      document.body.classList.remove('hide-navbars-on-qb');
+    }
+    return () => {
+      document.body.classList.remove('hide-navbars-on-qb');
+    };
+  }, [selectedSubject]);
 
   const [dynamicTopics, setDynamicTopics] = useState<any[]>([]);
   const [isLoadingTopics, setIsLoadingTopics] = useState<boolean>(false);
@@ -710,7 +781,7 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
         )}
 
         {/* Sticky Bottom Bar: Horizontal Scrollable Chapter/Topic Chips + MCQ/Written Toggle (Matching Video) */}
-        <div className="fixed bottom-[56px] left-0 right-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200/90 dark:border-slate-800 py-2.5 px-3 max-w-2xl mx-auto shadow-lg space-y-2">
+        <div className="fixed bottom-0 left-0 right-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200/90 dark:border-slate-800 py-2.5 px-3 max-w-2xl mx-auto shadow-lg space-y-2">
           {/* Row 1: Horizontal Scrollable Chapter / Topic Chips */}
           <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar text-xs">
             {!isDrilledIntoTopics || selectedChapter === 'all' || !selectedChapter ? (
@@ -805,26 +876,26 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
           </div>
 
           {/* Row 2: MCQ vs Written Filter Radio/Pills (Matching Video & Screenshot 4) */}
-          <div className="flex items-center gap-5 px-1 pt-0.5">
-            <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer select-none">
+          <div className="flex items-center gap-5 pt-[4px] pl-[4px] pb-[8px] pr-[3px]">
+            <label className="flex items-center gap-1.5 text-[14px] font-bold text-slate-700 dark:text-slate-300 cursor-pointer select-none">
               <input
                 type="radio"
                 name="qtype_bottom"
                 checked={questionTypeFilter === 'mcq'}
                 onChange={() => handleToggleQuestionType('mcq')}
-                className="text-[#2563EB] focus:ring-[#2563EB] cursor-pointer"
+                className="text-[#2563EB] focus:ring-[#2563EB] cursor-pointer mt-0 text-[13px] w-[18.9903px] h-[19.9903px]"
               />
-              <span>MCQ</span>
+              <span className="text-[13px]">MCQ</span>
             </label>
-            <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer select-none">
+            <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-300 border-[#233550] cursor-pointer select-none">
               <input
                 type="radio"
                 name="qtype_bottom"
                 checked={questionTypeFilter === 'written'}
                 onChange={() => handleToggleQuestionType('written')}
-                className="text-[#2563EB] focus:ring-[#2563EB] cursor-pointer"
+                className="text-[#2563EB] focus:ring-[#2563EB] cursor-pointer text-[14px] w-[18.9903px] h-[16.9903px]"
               />
-              <span>Written</span>
+              <span className="text-[13px]">Written</span>
             </label>
           </div>
         </div>

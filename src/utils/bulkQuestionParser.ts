@@ -528,6 +528,10 @@ export async function parseExcelOrCsvFile(
       const chapterId = findKeyValue(row, ['chapter_id', 'chapterId', 'Chapter ID']);
       const chapterName = findKeyValue(row, ['chapter_name', 'chapter', 'অধ্যায়', 'অধ্যায়', 'Chapter Name', 'Chapter']);
 
+      // Topic
+      const topicId = findKeyValue(row, ['topic_id', 'topicId', 'Topic ID', 'topic']);
+      const topicName = findKeyValue(row, ['topic_name', 'topicName', 'টপিক', 'টপিক নাম', 'Topic Name', 'টপিক_নাম']);
+
       // Tags
       const tagsRaw = findKeyValue(row, ['tags', 'tag', 'ট্যাগ', 'Tags']);
 
@@ -562,6 +566,8 @@ export async function parseExcelOrCsvFile(
           subject_name: subjectName ? String(subjectName) : undefined,
           chapter_id: chapterId ? String(chapterId) : undefined,
           chapter_name: chapterName ? String(chapterName) : undefined,
+          topic_id: topicId ? String(topicId) : undefined,
+          topic_name: topicName ? String(topicName) : undefined,
           tags: tagsArr.length ? tagsArr : undefined,
           difficulty: difficulty ? (String(difficulty).toLowerCase() as any) : undefined,
           star_rating: starRating ? (Number(starRating) as any) : undefined,
