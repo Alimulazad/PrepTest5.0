@@ -979,7 +979,7 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
         setParsedQuestions(revalidateParsedItems(enriched));
       } else {
         // Handle Excel (.xlsx, .xls) or CSV
-        const result = await parseExcelOrCsvFile(file, defaults);
+        const result = await parseExcelOrCsvFile(file, defaults, importType);
         if (!result.success && result.errors.length > 0) {
           setParseErrors(result.errors);
         } else {
@@ -1212,6 +1212,13 @@ Ans: A
           marks: q.marks || 5,
           tags: q.tags || [],
           difficulty: q.difficulty || 'medium',
+          question_number: q.question_number,
+          question_image_url: q.question_image_url,
+          explanation: q.answer_text || q.explanation || '',
+          explanation_latex: q.explanation_latex,
+          explanation_image_urls: q.explanation_image_urls || [],
+          category: q.category || 'varsity_a',
+          star_rating: q.star_rating || 1,
         }));
 
         const res = await bulkImportWrittenQuestionsApi(formatted);

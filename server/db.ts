@@ -3124,7 +3124,7 @@ export async function insertWrittenQuestion(q: Partial<WrittenQuestion>): Promis
     question_number: q.question_number ? Number(q.question_number) : undefined,
     question_text: q.question_text || '',
     question_image_url: q.question_image_url,
-    explanation: q.explanation || '',
+    explanation: q.explanation || (q as any).answer_text || '',
     explanation_latex: q.explanation_latex,
     explanation_image_urls: q.explanation_image_urls || [],
     tags: Array.isArray(q.tags) ? q.tags : [],

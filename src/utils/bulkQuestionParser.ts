@@ -18,6 +18,10 @@ export interface ParsedQuestionItem {
   // Written question fields
   answer_text?: string;
   marks?: number;
+  question_number?: number;
+  question_image_url?: string;
+  explanation_latex?: string;
+  explanation_image_urls?: string[];
 
   // Topic fields
   topic_code?: string;
@@ -428,7 +432,8 @@ function findKeyValue(row: Record<string, any>, possibleKeys: string[]): any {
  */
 export async function parseExcelOrCsvFile(
   file: File | ArrayBuffer,
-  defaults?: BulkDefaults
+  defaults?: BulkDefaults,
+  importType?: 'mcq' | 'written' | 'topic' | 'knowledge_snippet'
 ): Promise<BulkParseResult> {
   const errors: string[] = [];
   try {
@@ -505,6 +510,90 @@ export async function parseExcelOrCsvFile(
       const qText = findKeyValue(row, [
         'question_text', 'question', 'questionText', 'প্রশ্ন', 'Question Text', 'Question', 'q_text', 'q'
       ]);
+
+      if (importType === 'written' || String(row.type || '').toLowerCase() === 'written') {
+        const answerText = findKeyValue(row, ['answer_text', 'answer', 'explanation', 'solution', 'ব্যাখ্যা', 'সমাধান', 'Explanation', 'Solution', 'Answer Text', 'Answer']);
+        const questionNumber = findKeyValue(row, ['question_number', 'questionNumber', 'ক্রম', 'Question Number', 'q_num']);
+        const questionImageUrl = findKeyValue(row, ['question_image_url', 'questionImageUrl', 'Question Image URL', 'q_img_url']);
+        const explanationLatex = findKeyValue(row, ['explanation_latex', 'explanationLatex', 'Explanation LaTeX', 'exp_latex']);
+        const explanationImageUrls = findKeyValue(row, ['explanation_image_urls', 'explanationImageUrls', 'Explanation Image URLs', 'exp_img_urls']);
+        const marks = findKeyValue(row, ['marks', 'mark', 'নম্বর', 'Marks', 'Mark']);
+        const starRating = findKeyValue(row, ['star_rating', 'rating', 'স্টার', 'Star Rating', 'star']);
+        const difficulty = findKeyValue(row, ['difficulty', 'Difficulty', 'লেভেল']);
+        const category = findKeyValue(row, ['category', 'Category', 'ক্যাটাগরি']);
+
+        const subject = findKeyValue(row, ['subject_id', 'subject', 'বিষয়', 'বিষয়', 'Subject', 'Subject ID', 'subject_name']);
+        const subjectName = findKeyValue(row, ['subject_name', 'subjectName', 'Subject Name']);
+        const chapterId = findKeyValue(row, ['chapter_id', 'chapterId', 'Chapter ID']);
+        const chapterName = findKeyValue(row, ['chapter_name', 'chapter', 'অধ্যায়', 'অধ্যায়', 'Chapter Name', 'Chapter']);
+        const topicId = findKeyValue(row, ['topic_id', 'topicId', 'Topic ID', 'topic']);
+        const topicName = findKeyValue(row, ['topic_name', 'topicName', 'টপিক', 'টপিক নাম', 'Topic Name', 'টপিক_নাম']);
+        const tagsRaw = findKeyValue(row, ['tags', 'tag', 'ট্যাগ', 'Tags']);
+
+        let tagsArr: string[] = [];
+        if (typeof tagsRaw === 'string') {
+          tagsArr = tagsRaw.split(/[,;]+/).map((t: string) => t.trim()).filter(Boolean);
+        } else if (Array.isArray(tagsRaw)) {
+          tagsArr = tagsRaw;
+        }
+
+        const issues: string[] = [];
+        if (!String(qText || '').trim()) {
+          issues.push('লিখিত প্রশ্নের বিবরণ (Question Text) অনুপস্থিত');
+        }
+        if (!String(answerText || '').trim()) {
+          issues.push('লিখিত প্রশ্নের উত্তর/সমাধান (Answer/Explanation) অনুপস্থিত');
+        }
+
+        const subjectId = subject ? normalizeSubjectId(String(subject), defaults?.subject_id) : (defaults?.subject_id || 'physics_1');
+        const paper = defaults?.paper || (subjectId.endsWith('_2') ? '2nd' : '1st');
+
+        let expImgUrlsArr: string[] = [];
+        if (Array.isArray(explanationImageUrls)) {
+          expImgUrlsArr = explanationImageUrls;
+        } else if (typeof explanationImageUrls === 'string' && explanationImageUrls.trim()) {
+          try {
+            const parsed = JSON.parse(explanationImageUrls);
+            if (Array.isArray(parsed)) {
+              expImgUrlsArr = parsed;
+            } else {
+              expImgUrlsArr = [explanationImageUrls];
+            }
+          } catch {
+            expImgUrlsArr = explanationImageUrls.split(',').map((x: string) => x.trim()).filter(Boolean);
+          }
+        }
+
+        const item: ParsedQuestionItem = {
+          item_type: 'written',
+          question_text: String(qText || '').trim(),
+          answer_text: String(answerText || '').trim(),
+          explanation: String(answerText || '').trim(),
+          question_number: questionNumber ? Number(questionNumber) : undefined,
+          question_image_url: questionImageUrl ? String(questionImageUrl).trim() : undefined,
+          explanation_latex: explanationLatex ? String(explanationLatex).trim() : undefined,
+          explanation_image_urls: expImgUrlsArr,
+          marks: marks ? Number(marks) : 5,
+          star_rating: starRating ? (Number(starRating) as any) : 1,
+          difficulty: difficulty ? (String(difficulty).toLowerCase() as any) : 'medium',
+          category: category ? String(category) : 'varsity_a',
+          subject_id: subjectId as any,
+          subject_name: subjectName ? String(subjectName) : undefined,
+          paper: paper as any,
+          chapter_id: chapterId ? String(chapterId) : undefined,
+          chapter_name: chapterName ? String(chapterName) : undefined,
+          topic_id: topicId ? String(topicId) : undefined,
+          topic_name: topicName ? String(topicName) : undefined,
+          tags: tagsArr,
+          status: issues.length > 0 ? 'invalid' : 'valid',
+          isValid: issues.length === 0,
+          validationIssues: issues,
+          rawSourceIndex: idx + 1,
+        };
+
+        parsedQuestions.push(item);
+        return;
+      }
 
       // Options
       const optA = findKeyValue(row, ['option_a', 'optionA', 'opt_a', 'opta', 'a', 'A', 'অপশন ক', 'অপশন (ক)', 'ক', 'Option A', 'Option (A)', 'option_1', 'option1']);
