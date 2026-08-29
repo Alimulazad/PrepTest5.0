@@ -15,6 +15,10 @@ export interface ParsedQuestionItem {
   correct_ans?: 'A' | 'B' | 'C' | 'D';
   explanation?: string;
 
+  // Institution & Session / Year tracking
+  institution_code?: string;
+  session?: string;
+
   // Written question fields
   answer_text?: string;
   marks?: number;
@@ -74,6 +78,8 @@ export interface BulkDefaults {
   chapter_name?: string;
   topic_id?: string;
   topic_name?: string;
+  institution_code?: string;
+  session?: string;
   tags?: string[];
   difficulty?: 'easy' | 'medium' | 'hard';
   category?: string;
@@ -329,6 +335,8 @@ export function validateAndEnrichQuestion(
   const chapterId = raw.chapter_id || defaults?.chapter_id || `${subjectId.substring(0, 3)}_ch1`;
   const chapterName = fixMojibake(raw.chapter_name || defaults?.chapter_name || 'সাধারণ অধ্যায়').trim();
   const subjectName = fixMojibake(raw.subject_name || defaults?.subject_name || subjectId).trim();
+  const institutionCode = (raw.institution_code || defaults?.institution_code || '').trim() || undefined;
+  const session = (raw.session || defaults?.session || '').trim() || undefined;
 
   let tags = raw.tags || defaults?.tags || [];
   if (typeof tags === 'string') {
@@ -392,6 +400,8 @@ export function validateAndEnrichQuestion(
     topic_id: finalTopicId,
     topic_name: finalTopicName,
     category: raw.category || defaults?.category || 'varsity_a',
+    institution_code: institutionCode,
+    session: session,
     tags: tags,
     difficulty: difficulty,
     star_rating: starRating,
@@ -528,6 +538,12 @@ export async function parseExcelOrCsvFile(
         const starRating = findKeyValue(row, ['star_rating', 'rating', 'স্টার', 'Star Rating', 'star']);
         const difficulty = findKeyValue(row, ['difficulty', 'Difficulty', 'লেভেল']);
         const category = findKeyValue(row, ['category', 'Category', 'ক্যাটাগরি']);
+        const institutionCode = findKeyValue(row, [
+          'institution_code', 'institute_code', 'institution', 'institute', 'ভার্সিটি', 'বিশ্ববিদ্যালয়', 'Institution Code', 'Institution', 'institutionCode', 'university', 'varsity'
+        ]);
+        const sessionVal = findKeyValue(row, [
+          'session', 'year', 'সেশন', 'সাল', 'Session', 'Year', 'exam_year', 'academic_year'
+        ]);
 
         const subject = findKeyValue(row, ['subject_id', 'subject', 'বিষয়', 'বিষয়', 'Subject', 'Subject ID', 'subject_name']);
         const subjectName = findKeyValue(row, ['subject_name', 'subjectName', 'Subject Name']);
@@ -584,6 +600,8 @@ export async function parseExcelOrCsvFile(
           star_rating: starRating ? (Number(starRating) as any) : 1,
           difficulty: difficulty ? (String(difficulty).toLowerCase() as any) : 'medium',
           category: category ? String(category) : 'varsity_a',
+          institution_code: institutionCode ? String(institutionCode).trim() : (defaults?.institution_code || undefined),
+          session: sessionVal ? String(sessionVal).trim() : (defaults?.session || undefined),
           subject_id: subjectId as any,
           subject_name: subjectName ? String(subjectName) : undefined,
           paper: paper as any,
@@ -616,6 +634,14 @@ export async function parseExcelOrCsvFile(
       // Explanation
       const explanation = findKeyValue(row, ['explanation', 'ব্যাখ্যা', 'ব্যাখ্যাঃ', 'ব্যাখ্যা:', 'Explanation', 'Solution', 'সমাধান', 'explain']);
 
+      // Institution and Session
+      const institutionCode = findKeyValue(row, [
+        'institution_code', 'institute_code', 'institution', 'institute', 'ভার্সিটি', 'বিশ্ববিদ্যালয়', 'Institution Code', 'Institution', 'institutionCode', 'university', 'varsity'
+      ]);
+      const sessionVal = findKeyValue(row, [
+        'session', 'year', 'সেশন', 'সাল', 'Session', 'Year', 'exam_year', 'academic_year'
+      ]);
+
       // Subject
       const subject = findKeyValue(row, ['subject_id', 'subject', 'বিষয়', 'বিষয়', 'Subject', 'Subject ID', 'subject_name']);
       const subjectName = findKeyValue(row, ['subject_name', 'subjectName', 'Subject Name']);
@@ -627,6 +653,9 @@ export async function parseExcelOrCsvFile(
       // Topic
       const topicId = findKeyValue(row, ['topic_id', 'topicId', 'Topic ID', 'topic']);
       const topicName = findKeyValue(row, ['topic_name', 'topicName', 'টপিক', 'টপিক নাম', 'Topic Name', 'টপিক_নাম']);
+
+      // Category
+      const category = findKeyValue(row, ['category', 'Category', 'ক্যাটাগরি']);
 
       // Tags
       const tagsRaw = findKeyValue(row, ['tags', 'tag', 'ট্যাগ', 'Tags']);
@@ -658,6 +687,9 @@ export async function parseExcelOrCsvFile(
           },
           correct_ans: correctAns ? (String(correctAns) as any) : undefined,
           explanation: String(explanation || ''),
+          institution_code: institutionCode ? String(institutionCode).trim() : defaults?.institution_code,
+          session: sessionVal ? String(sessionVal).trim() : defaults?.session,
+          category: category ? String(category) : undefined,
           subject_id: subject ? normalizeSubjectId(String(subject), defaults?.subject_id) : defaults?.subject_id,
           subject_name: subjectName ? String(subjectName) : undefined,
           chapter_id: chapterId ? String(chapterId) : undefined,
@@ -1204,7 +1236,8 @@ export function isCsvFormat(text: string): boolean {
   
   // Look for signature headers
   const csvHeaders = [
-    'subject_id', 'subject_name', 'chapter_id', 'chapter_name', 'topic_id', 'topic_name', 
+    'institution_code', 'session', 'institute_code', 'year', 'subject_id', 'subject_name',
+    'chapter_id', 'chapter_name', 'topic_id', 'topic_name', 
     'question_text', 'question_number', 'question_image_url', 'explanation', 'correct_ans',
     'option_a', 'option_b', 'option_c', 'option_d', 'category', 'difficulty', 'star_rating',
     'tags', 'type'

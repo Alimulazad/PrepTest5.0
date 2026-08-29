@@ -29,7 +29,7 @@ import {
 } from 'lucide-react';
 import { SubjectInfo, Question, WrittenQuestion, ExamCategory, QuestionSubject, Chapter, QuestionsPaginatedResponse, WrittenQuestionsPaginatedResponse } from '../types';
 import { SUBJECTS_DATA, UNIVERSITIES_DATA, CHAPTERS_DATA } from '../data/admissionData';
-import { INSTITUTIONS_DATA, InstitutionInfo, InstitutionExamPaper, MEDICAL_2025_QUESTIONS } from '../data/institutionData';
+import { INSTITUTIONS_DATA, InstitutionInfo, InstitutionUnitInfo, InstitutionExamPaper, MEDICAL_2025_QUESTIONS, DU_A_QUESTIONS, getQuestionsForExamPaper } from '../data/institutionData';
 import { COMPREHENSIVE_CHAPTERS_DATA } from '../data/subjectTopicsData';
 import { INITIAL_WRITTEN_QUESTIONS } from '../data/writtenQuestionsData';
 import { useInfiniteQuestions, useQuestionCounts } from '../hooks/useQuestions';
@@ -41,9 +41,11 @@ import { QuestionListSkeleton } from '../components/common/SkeletonLoader';
 import VirtualizedQuestionList from '../components/common/VirtualizedQuestionList';
 import { filterQuestions, matchCategory } from '../utils/questionFilter';
 import InstitutionCardGrid from '../components/institution/InstitutionCardGrid';
+import InstitutionUnitSelectGrid from '../components/institution/InstitutionUnitSelectGrid';
 import InstitutionExamListView from '../components/institution/InstitutionExamListView';
 import InstitutionExamDetailModal from '../components/institution/InstitutionExamDetailModal';
 import InstitutionQuestionViewer from '../components/institution/InstitutionQuestionViewer';
+import InstitutionMockTestRunner from '../components/institution/InstitutionMockTestRunner';
 
 interface QuestionBankScreenProps {
   questions: Question[];
@@ -181,9 +183,17 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
 
   // Institution-based Question Bank States
   const [selectedInstitution, setSelectedInstitution] = useState<InstitutionInfo | null>(null);
+  const [selectedUnit, setSelectedUnit] = useState<InstitutionUnitInfo | null>(null);
   const [selectedInstitutionExam, setSelectedInstitutionExam] = useState<InstitutionExamPaper | null>(null);
   const [isViewingExamDetail, setIsViewingExamDetail] = useState<boolean>(false);
   const [isViewingQuestions, setIsViewingQuestions] = useState<boolean>(false);
+  const [isTakingMockTest, setIsTakingMockTest] = useState<boolean>(false);
+  const [mockTestConfig, setMockTestConfig] = useState<{
+    examTitle: string;
+    institutionName: string;
+    questions: Question[];
+    durationMinutes: number;
+  } | null>(null);
   const [institutionExamQuestions, setInstitutionExamQuestions] = useState<Question[]>([]);
   const [isLoadingInstQuestions, setIsLoadingInstQuestions] = useState<boolean>(false);
 
@@ -957,24 +967,62 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
   }
 
   // ==========================================
+  // INSTITUTION LEVEL 4: Live Mock Test Runner (With Timer, Scorecard & Review)
+  // ==========================================
+  if (isTakingMockTest && mockTestConfig) {
+    return (
+      <InstitutionMockTestRunner
+        examTitle={mockTestConfig.examTitle}
+        institutionName={mockTestConfig.institutionName}
+        questions={mockTestConfig.questions}
+        durationMinutes={mockTestConfig.durationMinutes}
+        onExit={() => {
+          setIsTakingMockTest(false);
+          setMockTestConfig(null);
+        }}
+        onRestart={() => {
+          // Restart test with same config
+          setIsTakingMockTest(false);
+          setTimeout(() => {
+            setIsTakingMockTest(true);
+          }, 50);
+        }}
+      />
+    );
+  }
+
+  // ==========================================
   // INSTITUTION LEVEL 3: Question Viewer (Interactive with MathText & Sections)
   // ==========================================
-  if (selectedInstitution && selectedInstitutionExam && isViewingQuestions) {
+  if (selectedInstitution && isViewingQuestions) {
     const examQuestions =
       institutionExamQuestions.length > 0
         ? institutionExamQuestions
-        : selectedInstitutionExam.questions && selectedInstitutionExam.questions.length > 0
+        : selectedInstitutionExam?.questions && selectedInstitutionExam.questions.length > 0
         ? selectedInstitutionExam.questions
-        : selectedInstitutionExam.id === 'med_2025'
+        : selectedInstitutionExam?.id === 'med_2025'
         ? MEDICAL_2025_QUESTIONS
-        : (questions.slice(0, 30) as any);
+        : (selectedInstitutionExam?.id?.startsWith('du_') ? DU_A_QUESTIONS : questions.slice(0, 30) as any);
+
+    const activeExam: InstitutionExamPaper = selectedInstitutionExam || {
+      id: 'custom_viewer',
+      institution_id: selectedInstitution.id,
+      title: `${selectedUnit ? selectedUnit.fullName : selectedInstitution.fullName || selectedInstitution.name} প্রশ্নব্যাংক`,
+      year: '২০২৪-২৫',
+      total_marks: examQuestions.length,
+      negative_marking: 0.25,
+      duration_minutes: 20,
+      duration_label: '২০ মিনিট',
+      total_questions: examQuestions.length,
+      sections: [],
+    };
 
     if (isLoadingInstQuestions && institutionExamQuestions.length === 0) {
       return (
         <div className="space-y-4 pb-24 max-w-2xl mx-auto px-2 py-8 text-center animate-fadeIn">
           <div className="w-9 h-9 border-3 border-emerald-500/20 border-t-emerald-600 dark:border-t-emerald-400 rounded-full animate-spin mx-auto mb-3" />
           <p className="text-sm font-semibold text-slate-600 dark:text-slate-300">
-            {selectedInstitutionExam.title} এর প্রশ্নপত্র লোড হচ্ছে...
+            {activeExam.title} এর প্রশ্নপত্র লোড হচ্ছে...
           </p>
         </div>
       );
@@ -982,7 +1030,7 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
 
     return (
       <InstitutionQuestionViewer
-        exam={selectedInstitutionExam}
+        exam={activeExam}
         questions={examQuestions}
         bookmarks={bookmarks}
         onToggleBookmark={onToggleBookmark}
@@ -1008,7 +1056,22 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
         }}
         onStartExam={(exam) => {
           setIsViewingExamDetail(false);
-          setIsViewingQuestions(true);
+          const qList =
+            exam.questions && exam.questions.length > 0
+              ? exam.questions
+              : exam.id === 'med_2025'
+              ? MEDICAL_2025_QUESTIONS
+              : exam.id?.startsWith('du_')
+              ? DU_A_QUESTIONS
+              : (questions.slice(0, 25) as any);
+
+          setMockTestConfig({
+            examTitle: exam.title,
+            institutionName: selectedUnit ? selectedUnit.name : selectedInstitution.name,
+            questions: qList,
+            durationMinutes: exam.duration_minutes || 20,
+          });
+          setIsTakingMockTest(true);
         }}
         onViewQuestions={(exam) => {
           setIsViewingExamDetail(false);
@@ -1019,26 +1082,71 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
   }
 
   // ==========================================
-  // INSTITUTION LEVEL 1: Year-wise Exam Paper List
+  // INSTITUTION LEVEL 1.5: 3-Tab Dashboard (Exam List, Topic Wise, Practice)
+  // Shown when unit is selected OR institution has no units
   // ==========================================
-  if (selectedInstitution) {
+  if (selectedInstitution && (!selectedInstitution.units || selectedInstitution.units.length === 0 || selectedUnit)) {
     return (
       <InstitutionExamListView
         institution={selectedInstitution}
-        onBack={() => setSelectedInstitution(null)}
+        unit={selectedUnit}
+        onBack={() => {
+          if (selectedUnit) {
+            setSelectedUnit(null);
+          } else {
+            setSelectedInstitution(null);
+          }
+        }}
         onSelectExam={(exam) => {
           setSelectedInstitutionExam(exam);
           setIsViewingExamDetail(true);
         }}
-        onSelectTopicWise={(inst) => {
-          setSelectedSubject(SUBJECTS_DATA[0]);
-          setSelectedCategory('medical');
-        }}
-        onStartPractice={(inst) => {
-          if (inst.exams && inst.exams.length > 0) {
-            setSelectedInstitutionExam(inst.exams[0]);
-            setIsViewingQuestions(true);
+        onStartTopicQuestions={(config) => {
+          // Filter questions for topic wise view
+          let matched = questions;
+          if (config.subjectId) {
+            matched = questions.filter((q) => q.subject_id?.toLowerCase().includes(config.subjectId!.toLowerCase()));
           }
+          if (matched.length === 0) {
+            matched = DU_A_QUESTIONS;
+          }
+          setInstitutionExamQuestions(matched.slice(0, 40));
+          setIsViewingQuestions(true);
+        }}
+        onStartPracticeWithConfig={(config) => {
+          const pool = selectedInstitution.exams?.[0]?.questions?.length
+            ? selectedInstitution.exams[0].questions
+            : DU_A_QUESTIONS.length
+            ? DU_A_QUESTIONS
+            : questions;
+
+          const testQuestions = pool.slice(0, config.totalQuestions);
+          setMockTestConfig({
+            examTitle: `${selectedUnit ? selectedUnit.fullName : selectedInstitution.name} স্পেশাল প্র্যাকটিস`,
+            institutionName: selectedUnit ? selectedUnit.name : selectedInstitution.name,
+            questions: testQuestions,
+            durationMinutes: config.durationMinutes,
+          });
+          setIsTakingMockTest(true);
+        }}
+      />
+    );
+  }
+
+  // ==========================================
+  // INSTITUTION LEVEL 1: Sub-Unit Selection Grid (e.g. DU A, B, C, D, Tech)
+  // Shown when institution has multiple units and none selected yet
+  // ==========================================
+  if (selectedInstitution && selectedInstitution.units && selectedInstitution.units.length > 0 && !selectedUnit) {
+    return (
+      <InstitutionUnitSelectGrid
+        institution={selectedInstitution}
+        onSelectUnit={(unit) => {
+          setSelectedUnit(unit);
+        }}
+        onBack={() => {
+          setSelectedInstitution(null);
+          setSelectedUnit(null);
         }}
       />
     );

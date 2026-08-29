@@ -152,6 +152,8 @@ export interface Question {
   star_rating: 1 | 2 | 3;
   type: 'mcq' | 'written';
   difficulty?: 'easy' | 'medium' | 'hard';
+  mark?: number;
+  section_header?: string;
 }
 
 export interface SubTopic {
