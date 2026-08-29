@@ -886,6 +886,9 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
                 chapter_name: item.chapter_name || defaults.chapter_name,
                 topic_id: item.topic_id || '',
                 topic_name: item.topic_name || '',
+                institution_code: item.institution_code || item.institute_code || defaults.institution_code,
+                session: item.session || item.year || defaults.session,
+                category: item.category || defaults.category,
                 tags: Array.isArray(item.tags) ? item.tags : defaults.tags,
                 difficulty: item.difficulty || defaults.difficulty,
                 star_rating: item.star_rating || 3,
@@ -915,6 +918,9 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
               chapter_name: item.chapter_name || defaults.chapter_name,
               topic_id: item.topic_id || '',
               topic_name: item.topic_name || '',
+              institution_code: item.institution_code || item.institute_code || defaults.institution_code,
+              session: item.session || item.year || defaults.session,
+              category: item.category || defaults.category,
               tags: Array.isArray(item.tags) ? item.tags : defaults.tags,
               difficulty: item.difficulty || defaults.difficulty,
               status: issues.length > 0 ? 'invalid' : 'valid',
@@ -1141,6 +1147,8 @@ Ans: A
           difficulty: q.difficulty || 'medium',
           star_rating: q.star_rating || 3,
           type: q.type || 'mcq',
+          institution_code: q.institution_code || undefined,
+          session: q.session || undefined,
         }));
 
         const createTaxonomyPayload: any[] = [];
@@ -1241,6 +1249,8 @@ Ans: A
           explanation_image_urls: q.explanation_image_urls || [],
           category: q.category || 'varsity_a',
           star_rating: q.star_rating || 1,
+          institution_code: q.institution_code || undefined,
+          session: q.session || undefined,
         }));
 
         const res = await bulkImportWrittenQuestionsApi(formatted);

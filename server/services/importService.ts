@@ -833,8 +833,9 @@ export async function commitQuestionsImport(
           topic_id, topic_name, category, question_text, math_formula_latex,
           options, correct_ans, explanation, explanation_latex,
           question_image_url, explanation_image_url,
-          tags, star_rating, type, difficulty, created_at, import_batch_id
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+          tags, star_rating, type, difficulty, created_at, import_batch_id,
+          institution_code, session
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
         ON CONFLICT (id) DO UPDATE SET
           subject_id = EXCLUDED.subject_id,
           subject_name = EXCLUDED.subject_name,
@@ -856,7 +857,9 @@ export async function commitQuestionsImport(
           star_rating = EXCLUDED.star_rating,
           type = EXCLUDED.type,
           difficulty = EXCLUDED.difficulty,
-          import_batch_id = EXCLUDED.import_batch_id;
+          import_batch_id = EXCLUDED.import_batch_id,
+          institution_code = COALESCE(EXCLUDED.institution_code, questions.institution_code),
+          session = COALESCE(EXCLUDED.session, questions.session);
       `;
 
       let failedChunksCount = 0;
@@ -926,6 +929,8 @@ export async function commitQuestionsImport(
               q.difficulty || 'medium',
               Date.now(),
               batchId,
+              q.institution_code || q.institute_code || q.institution || null,
+              q.session || q.year || null,
             ]);
           }
 
@@ -1012,6 +1017,8 @@ export async function commitQuestionsImport(
       type: q.type || 'mcq',
       difficulty: q.difficulty || 'medium',
       import_batch_id: batchId,
+      institution_code: q.institution_code || q.institute_code || q.institution,
+      session: q.session || q.year,
     } as any);
   }
 
