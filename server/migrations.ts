@@ -985,6 +985,34 @@ export const migrations: Migration[] = [
       await client.query(`DROP TABLE IF EXISTS import_jobs CASCADE;`);
     },
   },
+  {
+    id: '012_add_institution_and_session_columns',
+    name: 'Add nullable institution_code and session columns to questions and written_questions',
+    up: async (client: pg.PoolClient) => {
+      logger.info('[Migration 012] Adding institution_code and session columns...');
+      await client.query(`
+        ALTER TABLE questions ADD COLUMN IF NOT EXISTS institution_code VARCHAR(100);
+        ALTER TABLE questions ADD COLUMN IF NOT EXISTS session VARCHAR(50);
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS institution_code VARCHAR(100);
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS session VARCHAR(50);
+
+        CREATE INDEX IF NOT EXISTS idx_questions_inst_session ON questions (institution_code, session);
+        CREATE INDEX IF NOT EXISTS idx_written_questions_inst_session ON written_questions (institution_code, session);
+      `);
+      logger.info('[Migration 012] ✅ institution_code and session columns and indexes added.');
+    },
+    down: async (client: pg.PoolClient) => {
+      logger.info('[Migration 012] Rolling back institution_code and session columns...');
+      await client.query(`
+        DROP INDEX IF EXISTS idx_questions_inst_session;
+        DROP INDEX IF EXISTS idx_written_questions_inst_session;
+        ALTER TABLE questions DROP COLUMN IF EXISTS institution_code;
+        ALTER TABLE questions DROP COLUMN IF EXISTS session;
+        ALTER TABLE written_questions DROP COLUMN IF EXISTS institution_code;
+        ALTER TABLE written_questions DROP COLUMN IF EXISTS session;
+      `);
+    },
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

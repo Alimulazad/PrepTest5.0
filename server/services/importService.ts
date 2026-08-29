@@ -58,6 +58,11 @@ export interface RawImportRow {
   // Metadata
   category?: string;
   tags?: string[] | string;
+  institution_code?: string;
+  institute_code?: string;
+  institution?: string;
+  session?: string;
+  year?: string;
   difficulty?: 'easy' | 'medium' | 'hard';
   star_rating?: number;
   type?: 'mcq' | 'written';
@@ -1300,8 +1305,9 @@ async function runQuestionsImportJobWorker(
         topic_id, topic_name, category, question_text, math_formula_latex,
         options, correct_ans, explanation, explanation_latex,
         question_image_url, explanation_image_url,
-        tags, star_rating, type, difficulty, created_at, import_batch_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+        tags, star_rating, type, difficulty, created_at, import_batch_id,
+        institution_code, session
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
       ON CONFLICT (id) DO UPDATE SET
         subject_id = EXCLUDED.subject_id,
         subject_name = EXCLUDED.subject_name,
@@ -1323,7 +1329,9 @@ async function runQuestionsImportJobWorker(
         star_rating = EXCLUDED.star_rating,
         type = EXCLUDED.type,
         difficulty = EXCLUDED.difficulty,
-        import_batch_id = EXCLUDED.import_batch_id;
+        import_batch_id = EXCLUDED.import_batch_id,
+        institution_code = COALESCE(EXCLUDED.institution_code, questions.institution_code),
+        session = COALESCE(EXCLUDED.session, questions.session);
     `;
 
     for (let i = 0; i < questions.length; i += CHUNK_SIZE) {
@@ -1366,6 +1374,8 @@ async function runQuestionsImportJobWorker(
               questionId = `q_${q.subject_id || 'phy'}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
             }
             const paperStr = q.paper === 2 || q.paper === '2' || q.paper === '2nd' ? '2nd' : '1st';
+            const instCode = q.institution_code || q.institute_code || q.institution || null;
+            const sessionVal = q.session || q.year || null;
 
             await client.query(upsertQuestionSql, [
               questionId,
@@ -1391,6 +1401,8 @@ async function runQuestionsImportJobWorker(
               q.difficulty || 'medium',
               Date.now(),
               batchId,
+              instCode,
+              sessionVal,
             ]);
           }
           await client.query('COMMIT');

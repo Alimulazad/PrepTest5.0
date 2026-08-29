@@ -7,6 +7,8 @@ export interface WrittenQuestion {
   chapter_name: string;
   topic_id?: string;
   topic_name?: string;
+  institution_code?: string;
+  session?: string;
   question_number?: number;
   question_text: string;
   question_image_url?: string;
@@ -27,6 +29,8 @@ export interface WrittenQuestionFilters {
   subject_id?: string;
   chapter_id?: string;
   topic_id?: string;
+  institution_code?: string;
+  session?: string;
   paper?: '1st' | '2nd' | 'all' | string;
   category?: ExamCategory | string;
   difficulty?: 'easy' | 'medium' | 'hard' | string;
@@ -51,6 +55,8 @@ export interface QuestionFilters {
   subject_id?: string;
   chapter_id?: string;
   topic_id?: string;
+  institution_code?: string;
+  session?: string;
   paper?: '1st' | '2nd' | 'all' | string;
   category?: ExamCategory | string;
   difficulty?: 'easy' | 'medium' | 'hard' | string;
@@ -125,6 +131,8 @@ export interface Question {
   chapter_name: string;
   topic_id?: string;
   topic_name?: string;
+  institution_code?: string;
+  session?: string;
   category?: ExamCategory;
   question_text: string;
   math_formula_latex?: string;

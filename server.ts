@@ -1507,7 +1507,24 @@ app.get('/api/questions/counts', async (req: Request, res: Response) => {
 // GET /api/questions with optional filtering, cursor and page pagination
 app.get('/api/questions', async (req: Request, res: Response) => {
   try {
-    const { subject_id, chapter_id, topic_id, type, paper, tag, search, category, difficulty, cursor, page, limit } = req.query;
+    const {
+      subject_id,
+      chapter_id,
+      topic_id,
+      institution_code,
+      institute_code,
+      session,
+      year,
+      type,
+      paper,
+      tag,
+      search,
+      category,
+      difficulty,
+      cursor,
+      page,
+      limit,
+    } = req.query;
 
     const pageNum = page !== undefined ? Math.max(1, parseInt(page as string, 10) || 1) : undefined;
     const limitNum = limit !== undefined ? Math.max(1, parseInt(limit as string, 10) || 20) : undefined;
@@ -1516,6 +1533,8 @@ app.get('/api/questions', async (req: Request, res: Response) => {
       subject_id: typeof subject_id === 'string' ? subject_id : undefined,
       chapter_id: typeof chapter_id === 'string' ? chapter_id : undefined,
       topic_id: typeof topic_id === 'string' ? topic_id : undefined,
+      institution_code: typeof institution_code === 'string' ? institution_code : typeof institute_code === 'string' ? institute_code : undefined,
+      session: typeof session === 'string' ? session : typeof year === 'string' ? year : undefined,
       type: typeof type === 'string' ? type : undefined,
       paper: typeof paper === 'string' ? paper : undefined,
       tag: typeof tag === 'string' ? tag : undefined,
@@ -1682,7 +1701,24 @@ app.delete('/api/questions/:id', authenticateAdmin, async (req: Request, res: Re
 // GET /api/written-questions with optional filtering, cursor and page pagination
 app.get('/api/written-questions', async (req: Request, res: Response) => {
   try {
-    const { subject_id, chapter_id, topic_id, type, paper, tag, search, category, difficulty, cursor, page, limit } = req.query;
+    const {
+      subject_id,
+      chapter_id,
+      topic_id,
+      institution_code,
+      institute_code,
+      session,
+      year,
+      type,
+      paper,
+      tag,
+      search,
+      category,
+      difficulty,
+      cursor,
+      page,
+      limit,
+    } = req.query;
 
     const pageNum = page !== undefined ? Math.max(1, parseInt(page as string, 10) || 1) : undefined;
     const limitNum = limit !== undefined ? Math.max(1, parseInt(limit as string, 10) || 20) : undefined;
@@ -1691,6 +1727,8 @@ app.get('/api/written-questions', async (req: Request, res: Response) => {
       subject_id: typeof subject_id === 'string' ? subject_id : undefined,
       chapter_id: typeof chapter_id === 'string' ? chapter_id : undefined,
       topic_id: typeof topic_id === 'string' ? topic_id : undefined,
+      institution_code: typeof institution_code === 'string' ? institution_code : typeof institute_code === 'string' ? institute_code : undefined,
+      session: typeof session === 'string' ? session : typeof year === 'string' ? year : undefined,
       type: typeof type === 'string' ? type : undefined,
       paper: typeof paper === 'string' ? paper : undefined,
       tag: typeof tag === 'string' ? tag : undefined,

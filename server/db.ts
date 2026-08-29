@@ -431,6 +431,10 @@ export async function getDatabase(): Promise<void> {
         -- Safe column migrations for existing PostgreSQL databases
         ALTER TABLE questions ADD COLUMN IF NOT EXISTS question_image_url TEXT;
         ALTER TABLE questions ADD COLUMN IF NOT EXISTS explanation_image_url TEXT;
+        ALTER TABLE questions ADD COLUMN IF NOT EXISTS institution_code VARCHAR(100);
+        ALTER TABLE questions ADD COLUMN IF NOT EXISTS session VARCHAR(50);
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS institution_code VARCHAR(100);
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS session VARCHAR(50);
       `);
 
       // Seed Topics in PG
@@ -1187,6 +1191,8 @@ export function formatRowToQuestion(row: any): Question {
     chapter_name: row.chapter_name,
     topic_id: row.topic_id || undefined,
     topic_name: row.topic_name || undefined,
+    institution_code: row.institution_code || undefined,
+    session: row.session || undefined,
     category: row.category || undefined,
     question_text: row.question_text,
     math_formula_latex: row.math_formula_latex || undefined,
@@ -1366,6 +1372,10 @@ export async function getAllQuestions(filters?: {
   subject_id?: string;
   chapter_id?: string;
   topic_id?: string;
+  institution_code?: string;
+  institute_code?: string;
+  session?: string;
+  year?: string;
   type?: string;
   paper?: string;
   tag?: string;
@@ -1380,6 +1390,9 @@ export async function getAllQuestions(filters?: {
   const page = Math.max(1, filters?.page ?? (cursorData?.page ? cursorData.page + 1 : 1));
   const limit = filters?.limit ? Math.max(1, filters.limit) : 15;
   const offset = (page - 1) * limit;
+
+  const instFilter = (filters?.institution_code || filters?.institute_code || '').trim();
+  const sessionFilter = (filters?.session || filters?.year || '').trim();
 
   try {
     let whereClause = ' WHERE (is_active IS NULL OR is_active = TRUE)';
@@ -1397,6 +1410,14 @@ export async function getAllQuestions(filters?: {
     if (filters?.topic_id) {
       whereClause += ` AND topic_id = $${pIdx++}`;
       params.push(filters.topic_id);
+    }
+    if (instFilter) {
+      whereClause += ` AND (institution_code ILIKE $${pIdx++} OR tags ILIKE $${pIdx++})`;
+      params.push(instFilter, `%${instFilter}%`);
+    }
+    if (sessionFilter) {
+      whereClause += ` AND (session ILIKE $${pIdx++} OR tags ILIKE $${pIdx++})`;
+      params.push(sessionFilter, `%${sessionFilter}%`);
     }
     if (filters?.type) {
       whereClause += ` AND type = $${pIdx++}`;
@@ -1477,6 +1498,22 @@ export async function getAllQuestions(filters?: {
   }
   if (filters?.topic_id) {
     list = list.filter((q) => q.topic_id === filters.topic_id);
+  }
+  if (instFilter) {
+    const instLower = instFilter.toLowerCase();
+    list = list.filter(
+      (q) =>
+        (q.institution_code && q.institution_code.toLowerCase() === instLower) ||
+        (q.tags && q.tags.some((t) => t.toLowerCase().includes(instLower)))
+    );
+  }
+  if (sessionFilter) {
+    const sessLower = sessionFilter.toLowerCase();
+    list = list.filter(
+      (q) =>
+        (q.session && q.session.toLowerCase() === sessLower) ||
+        (q.tags && q.tags.some((t) => t.toLowerCase().includes(sessLower)))
+    );
   }
   if (filters?.type) {
     list = list.filter((q) => (q.type || 'mcq') === filters.type);
@@ -1594,6 +1631,8 @@ export async function insertQuestion(q: Partial<Question>): Promise<Question> {
     chapter_name,
     topic_id,
     topic_name,
+    institution_code: q.institution_code || (q as any).institute_code || undefined,
+    session: q.session || (q as any).year || undefined,
     category: q.category || 'varsity_a',
     question_text: q.question_text || '',
     math_formula_latex: q.math_formula_latex,
@@ -1617,8 +1656,9 @@ export async function insertQuestion(q: Partial<Question>): Promise<Question> {
       topic_id, topic_name, category, question_text, math_formula_latex,
       options, correct_ans, explanation, explanation_latex,
       question_image_url, explanation_image_url,
-      tags, star_rating, type, difficulty, created_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+      tags, star_rating, type, difficulty, created_at,
+      institution_code, session
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
     ON CONFLICT (id) DO UPDATE SET
       subject_id = EXCLUDED.subject_id,
       subject_name = EXCLUDED.subject_name,
@@ -1639,7 +1679,9 @@ export async function insertQuestion(q: Partial<Question>): Promise<Question> {
       tags = EXCLUDED.tags,
       star_rating = EXCLUDED.star_rating,
       type = EXCLUDED.type,
-      difficulty = EXCLUDED.difficulty`,
+      difficulty = EXCLUDED.difficulty,
+      institution_code = COALESCE(EXCLUDED.institution_code, questions.institution_code),
+      session = COALESCE(EXCLUDED.session, questions.session)`,
     [
       id,
       newQ.subject_id,
@@ -1663,6 +1705,8 @@ export async function insertQuestion(q: Partial<Question>): Promise<Question> {
       newQ.type,
       newQ.difficulty,
       Date.now(),
+      newQ.institution_code || null,
+      newQ.session || null,
     ]
   );
 
@@ -1687,8 +1731,9 @@ export async function updateQuestionInDb(id: string, q: Partial<Question>): Prom
       topic_id = $6, topic_name = $7, category = $8, question_text = $9, math_formula_latex = $10,
       options = $11, correct_ans = $12, explanation = $13, explanation_latex = $14,
       question_image_url = $15, explanation_image_url = $16,
-      tags = $17, star_rating = $18, type = $19, difficulty = $20
-    WHERE id = $21`,
+      tags = $17, star_rating = $18, type = $19, difficulty = $20,
+      institution_code = $21, session = $22
+    WHERE id = $23`,
     [
       updated.subject_id,
       updated.subject_name,
@@ -1710,6 +1755,8 @@ export async function updateQuestionInDb(id: string, q: Partial<Question>): Prom
       updated.star_rating,
       updated.type,
       updated.difficulty,
+      updated.institution_code || null,
+      updated.session || null,
       id,
     ]
   );
@@ -1808,6 +1855,8 @@ export async function bulkImportQuestions(rawQuestions: any[]): Promise<{ count:
     if (q.year && !tagsArr.includes(q.year)) tagsArr.push(q.year);
 
     const id = q.id || `q_${subject_id}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const instCode = q.institution_code || q.institute_code || q.institution || undefined;
+    const sessionVal = q.session || q.year || undefined;
 
     const newQ: Question = {
       id,
@@ -1818,6 +1867,8 @@ export async function bulkImportQuestions(rawQuestions: any[]): Promise<{ count:
       chapter_name,
       topic_id,
       topic_name,
+      institution_code: instCode,
+      session: sessionVal,
       category: q.category || 'varsity_a',
       question_text: (q.question_text || q.questionText || '').trim(),
       math_formula_latex: q.math_formula_latex || null,
@@ -1847,8 +1898,9 @@ export async function bulkImportQuestions(rawQuestions: any[]): Promise<{ count:
         topic_id, topic_name, category, question_text, math_formula_latex,
         options, correct_ans, explanation, explanation_latex,
         question_image_url, explanation_image_url,
-        tags, star_rating, type, difficulty, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+        tags, star_rating, type, difficulty, created_at,
+        institution_code, session
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
       ON CONFLICT (id) DO UPDATE SET
         subject_id = EXCLUDED.subject_id,
         subject_name = EXCLUDED.subject_name,
@@ -1869,7 +1921,9 @@ export async function bulkImportQuestions(rawQuestions: any[]): Promise<{ count:
         tags = EXCLUDED.tags,
         star_rating = EXCLUDED.star_rating,
         type = EXCLUDED.type,
-        difficulty = EXCLUDED.difficulty;`;
+        difficulty = EXCLUDED.difficulty,
+        institution_code = COALESCE(EXCLUDED.institution_code, questions.institution_code),
+        session = COALESCE(EXCLUDED.session, questions.session);`;
 
       for (const item of normalizedQuestions) {
         await client.query(upsertSql, [
@@ -1895,6 +1949,8 @@ export async function bulkImportQuestions(rawQuestions: any[]): Promise<{ count:
           item.type,
           item.difficulty,
           Date.now(),
+          item.institution_code || null,
+          item.session || null,
         ]);
       }
 
@@ -2921,6 +2977,8 @@ export function formatRowToWrittenQuestion(row: any): WrittenQuestion {
     chapter_name: row.chapter_name,
     topic_id: row.topic_id || undefined,
     topic_name: row.topic_name || undefined,
+    institution_code: row.institution_code || undefined,
+    session: row.session || undefined,
     question_number: row.question_number ? Number(row.question_number) : undefined,
     question_text: row.question_text,
     question_image_url: row.question_image_url || undefined,
@@ -2952,6 +3010,10 @@ export async function getAllWrittenQuestions(filters?: {
   subject_id?: string;
   chapter_id?: string;
   topic_id?: string;
+  institution_code?: string;
+  institute_code?: string;
+  session?: string;
+  year?: string;
   type?: string;
   paper?: string;
   tag?: string;
@@ -2966,6 +3028,9 @@ export async function getAllWrittenQuestions(filters?: {
   const page = Math.max(1, filters?.page ?? (cursorData?.page ? cursorData.page + 1 : 1));
   const limit = filters?.limit ? Math.max(1, filters.limit) : 15;
   const offset = (page - 1) * limit;
+
+  const instFilter = (filters?.institution_code || filters?.institute_code || '').trim();
+  const sessionFilter = (filters?.session || filters?.year || '').trim();
 
   try {
     let whereClause = ' WHERE is_active = TRUE';
@@ -2983,6 +3048,14 @@ export async function getAllWrittenQuestions(filters?: {
     if (filters?.topic_id) {
       whereClause += ` AND topic_id = $${pIdx++}`;
       params.push(filters.topic_id);
+    }
+    if (instFilter) {
+      whereClause += ` AND (institution_code ILIKE $${pIdx++} OR tags ILIKE $${pIdx++})`;
+      params.push(instFilter, `%${instFilter}%`);
+    }
+    if (sessionFilter) {
+      whereClause += ` AND (session ILIKE $${pIdx++} OR tags ILIKE $${pIdx++})`;
+      params.push(sessionFilter, `%${sessionFilter}%`);
     }
     if (filters?.paper) {
       whereClause += ` AND paper = $${pIdx++}`;
@@ -3059,6 +3132,22 @@ export async function getAllWrittenQuestions(filters?: {
   }
   if (filters?.topic_id) {
     list = list.filter((q) => q.topic_id === filters.topic_id);
+  }
+  if (instFilter) {
+    const instLower = instFilter.toLowerCase();
+    list = list.filter(
+      (q) =>
+        (q.institution_code && q.institution_code.toLowerCase() === instLower) ||
+        (q.tags && q.tags.some((t) => t.toLowerCase().includes(instLower)))
+    );
+  }
+  if (sessionFilter) {
+    const sessLower = sessionFilter.toLowerCase();
+    list = list.filter(
+      (q) =>
+        (q.session && q.session.toLowerCase() === sessLower) ||
+        (q.tags && q.tags.some((t) => t.toLowerCase().includes(sessLower)))
+    );
   }
   if (filters?.paper) {
     list = list.filter((q) => q.paper === filters.paper);
@@ -3147,6 +3236,8 @@ export async function insertWrittenQuestion(q: Partial<WrittenQuestion>): Promis
     chapter_name: q.chapter_name || 'তাপগতিবিদ্যা',
     topic_id: q.topic_id,
     topic_name: q.topic_name,
+    institution_code: q.institution_code || (q as any).institute_code || undefined,
+    session: q.session || (q as any).year || undefined,
     question_number: q.question_number ? Number(q.question_number) : undefined,
     question_text: q.question_text || '',
     question_image_url: q.question_image_url,
@@ -3170,8 +3261,9 @@ export async function insertWrittenQuestion(q: Partial<WrittenQuestion>): Promis
       id, subject_id, subject_name, paper, chapter_id, chapter_name,
       topic_id, topic_name, question_number, question_text, question_image_url,
       explanation, explanation_latex, explanation_image_urls, tags, category,
-      difficulty, star_rating, created_at, updated_at, is_active
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+      difficulty, star_rating, created_at, updated_at, is_active,
+      institution_code, session
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
     ON CONFLICT (id) DO UPDATE SET
       subject_id = EXCLUDED.subject_id,
       subject_name = EXCLUDED.subject_name,
@@ -3191,7 +3283,9 @@ export async function insertWrittenQuestion(q: Partial<WrittenQuestion>): Promis
       difficulty = EXCLUDED.difficulty,
       star_rating = EXCLUDED.star_rating,
       updated_at = EXCLUDED.updated_at,
-      is_active = EXCLUDED.is_active`,
+      is_active = EXCLUDED.is_active,
+      institution_code = COALESCE(EXCLUDED.institution_code, written_questions.institution_code),
+      session = COALESCE(EXCLUDED.session, written_questions.session)`,
     [
       id,
       item.subject_id,
@@ -3214,6 +3308,8 @@ export async function insertWrittenQuestion(q: Partial<WrittenQuestion>): Promis
       item.created_at,
       item.updated_at,
       item.is_active,
+      item.institution_code || null,
+      item.session || null,
     ]
   );
 
@@ -3248,8 +3344,9 @@ export async function updateWrittenQuestionInDb(id: string, q: Partial<WrittenQu
       topic_id = $6, topic_name = $7, question_number = $8, question_text = $9,
       question_image_url = $10, explanation = $11, explanation_latex = $12,
       explanation_image_urls = $13, tags = $14, category = $15, difficulty = $16,
-      star_rating = $17, updated_at = $18, is_active = $19
-    WHERE id = $20`,
+      star_rating = $17, updated_at = $18, is_active = $19,
+      institution_code = $20, session = $21
+    WHERE id = $22`,
     [
       updated.subject_id,
       updated.subject_name,
@@ -3270,6 +3367,8 @@ export async function updateWrittenQuestionInDb(id: string, q: Partial<WrittenQu
       updated.star_rating,
       updated.updated_at,
       updated.is_active,
+      updated.institution_code || null,
+      updated.session || null,
       id,
     ]
   );

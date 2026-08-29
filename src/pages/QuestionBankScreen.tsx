@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { SubjectInfo, Question, WrittenQuestion, ExamCategory, QuestionSubject, Chapter, QuestionsPaginatedResponse, WrittenQuestionsPaginatedResponse } from '../types';
 import { SUBJECTS_DATA, UNIVERSITIES_DATA, CHAPTERS_DATA } from '../data/admissionData';
+import { INSTITUTIONS_DATA, InstitutionInfo, InstitutionExamPaper, MEDICAL_2025_QUESTIONS } from '../data/institutionData';
 import { COMPREHENSIVE_CHAPTERS_DATA } from '../data/subjectTopicsData';
 import { INITIAL_WRITTEN_QUESTIONS } from '../data/writtenQuestionsData';
 import { useInfiniteQuestions, useQuestionCounts } from '../hooks/useQuestions';
@@ -39,6 +40,10 @@ import EmptyState from '../components/common/EmptyState';
 import { QuestionListSkeleton } from '../components/common/SkeletonLoader';
 import VirtualizedQuestionList from '../components/common/VirtualizedQuestionList';
 import { filterQuestions, matchCategory } from '../utils/questionFilter';
+import InstitutionCardGrid from '../components/institution/InstitutionCardGrid';
+import InstitutionExamListView from '../components/institution/InstitutionExamListView';
+import InstitutionExamDetailModal from '../components/institution/InstitutionExamDetailModal';
+import InstitutionQuestionViewer from '../components/institution/InstitutionQuestionViewer';
 
 interface QuestionBankScreenProps {
   questions: Question[];
@@ -174,6 +179,42 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
   const loadMoreTriggerRef = useRef<HTMLDivElement | null>(null);
 
+  // Institution-based Question Bank States
+  const [selectedInstitution, setSelectedInstitution] = useState<InstitutionInfo | null>(null);
+  const [selectedInstitutionExam, setSelectedInstitutionExam] = useState<InstitutionExamPaper | null>(null);
+  const [isViewingExamDetail, setIsViewingExamDetail] = useState<boolean>(false);
+  const [isViewingQuestions, setIsViewingQuestions] = useState<boolean>(false);
+  const [institutionExamQuestions, setInstitutionExamQuestions] = useState<Question[]>([]);
+  const [isLoadingInstQuestions, setIsLoadingInstQuestions] = useState<boolean>(false);
+
+  // Fetch questions specifically for selected institution and session
+  useEffect(() => {
+    if (!selectedInstitution || !selectedInstitutionExam || !isViewingQuestions) {
+      return;
+    }
+
+    setIsLoadingInstQuestions(true);
+    const instCode = selectedInstitution.code;
+    const year = selectedInstitutionExam.year;
+
+    fetch(`/api/questions?institution_code=${encodeURIComponent(instCode)}&session=${encodeURIComponent(year)}&limit=200`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        const fetched = data?.data || data?.questions || [];
+        if (Array.isArray(fetched) && fetched.length > 0) {
+          setInstitutionExamQuestions(fetched);
+        } else {
+          setInstitutionExamQuestions([]);
+        }
+      })
+      .catch(() => {
+        setInstitutionExamQuestions([]);
+      })
+      .finally(() => {
+        setIsLoadingInstQuestions(false);
+      });
+  }, [selectedInstitution, selectedInstitutionExam, isViewingQuestions]);
+
   const [fetchedWrittenQuestions, setFetchedWrittenQuestions] = useState<WrittenQuestion[]>([]);
 
   useEffect(() => {
@@ -252,9 +293,9 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
     };
   }, []);
 
-  // Dynamically add/remove hide-navbars-on-qb based on selectedSubject
+  // Dynamically add/remove hide-navbars-on-qb based on selectedSubject or institution drilldown
   useEffect(() => {
-    if (selectedSubject) {
+    if (selectedSubject || selectedInstitution || isViewingQuestions || isViewingExamDetail) {
       document.body.classList.add('hide-navbars-on-qb');
     } else {
       document.body.classList.remove('hide-navbars-on-qb');
@@ -262,7 +303,7 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
     return () => {
       document.body.classList.remove('hide-navbars-on-qb');
     };
-  }, [selectedSubject]);
+  }, [selectedSubject, selectedInstitution, isViewingQuestions, isViewingExamDetail]);
 
   const [dynamicTopics, setDynamicTopics] = useState<any[]>([]);
   const [isLoadingTopics, setIsLoadingTopics] = useState<boolean>(false);
@@ -330,6 +371,18 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
         s.bangla_name.includes(q) ||
         s.paper.includes(q) ||
         (s.short_code && s.short_code.toLowerCase().includes(q))
+    );
+  }, [searchQuery]);
+
+  // Filtered Institutions for University/Institution Tab
+  const filteredInstitutions = useMemo(() => {
+    if (!searchQuery.trim()) return INSTITUTIONS_DATA;
+    const q = searchQuery.toLowerCase();
+    return INSTITUTIONS_DATA.filter(
+      (inst) =>
+        inst.name.toLowerCase().includes(q) ||
+        inst.code.toLowerCase().includes(q) ||
+        inst.fullName.toLowerCase().includes(q)
     );
   }, [searchQuery]);
 
@@ -904,6 +957,94 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
   }
 
   // ==========================================
+  // INSTITUTION LEVEL 3: Question Viewer (Interactive with MathText & Sections)
+  // ==========================================
+  if (selectedInstitution && selectedInstitutionExam && isViewingQuestions) {
+    const examQuestions =
+      institutionExamQuestions.length > 0
+        ? institutionExamQuestions
+        : selectedInstitutionExam.questions && selectedInstitutionExam.questions.length > 0
+        ? selectedInstitutionExam.questions
+        : selectedInstitutionExam.id === 'med_2025'
+        ? MEDICAL_2025_QUESTIONS
+        : (questions.slice(0, 30) as any);
+
+    if (isLoadingInstQuestions && institutionExamQuestions.length === 0) {
+      return (
+        <div className="space-y-4 pb-24 max-w-2xl mx-auto px-2 py-8 text-center animate-fadeIn">
+          <div className="w-9 h-9 border-3 border-emerald-500/20 border-t-emerald-600 dark:border-t-emerald-400 rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-sm font-semibold text-slate-600 dark:text-slate-300">
+            {selectedInstitutionExam.title} এর প্রশ্নপত্র লোড হচ্ছে...
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <InstitutionQuestionViewer
+        exam={selectedInstitutionExam}
+        questions={examQuestions}
+        bookmarks={bookmarks}
+        onToggleBookmark={onToggleBookmark}
+        onAskAI={onAskAI}
+        onBack={() => {
+          setIsViewingQuestions(false);
+          setInstitutionExamQuestions([]);
+        }}
+      />
+    );
+  }
+
+  // ==========================================
+  // INSTITUTION LEVEL 2: Exam Action / Detail Modal ("পরীক্ষা শুরু করো" & "প্রশ্ন দেখো")
+  // ==========================================
+  if (selectedInstitution && selectedInstitutionExam && isViewingExamDetail) {
+    return (
+      <InstitutionExamDetailModal
+        exam={selectedInstitutionExam}
+        onBack={() => {
+          setIsViewingExamDetail(false);
+          setSelectedInstitutionExam(null);
+        }}
+        onStartExam={(exam) => {
+          setIsViewingExamDetail(false);
+          setIsViewingQuestions(true);
+        }}
+        onViewQuestions={(exam) => {
+          setIsViewingExamDetail(false);
+          setIsViewingQuestions(true);
+        }}
+      />
+    );
+  }
+
+  // ==========================================
+  // INSTITUTION LEVEL 1: Year-wise Exam Paper List
+  // ==========================================
+  if (selectedInstitution) {
+    return (
+      <InstitutionExamListView
+        institution={selectedInstitution}
+        onBack={() => setSelectedInstitution(null)}
+        onSelectExam={(exam) => {
+          setSelectedInstitutionExam(exam);
+          setIsViewingExamDetail(true);
+        }}
+        onSelectTopicWise={(inst) => {
+          setSelectedSubject(SUBJECTS_DATA[0]);
+          setSelectedCategory('medical');
+        }}
+        onStartPractice={(inst) => {
+          if (inst.exams && inst.exams.length > 0) {
+            setSelectedInstitutionExam(inst.exams[0]);
+            setIsViewingQuestions(true);
+          }
+        }}
+      />
+    );
+  }
+
+  // ==========================================
   // LEVEL 2: ExamCategory Grid for Selected Subject
   // ==========================================
   if (selectedSubject) {
@@ -1063,39 +1204,12 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
         </div>
       )}
 
-      {/* Tab Content: প্রতিষ্ঠান ভিত্তিক (University Wise) */}
+      {/* Tab Content: প্রতিষ্ঠান ভিত্তিক (Institution Wise Grid Matching Video) */}
       {activeTab === 'university' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-          {UNIVERSITIES_DATA.map((uni) => (
-            <div
-              key={uni.id}
-              className="bg-white dark:bg-slate-800 p-3.5 rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-xs flex items-center justify-between hover:border-[#2563EB] transition-all"
-            >
-              <div className="flex items-center gap-2.5">
-                <div
-                  className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-xs shadow-xs"
-                  style={{ backgroundColor: uni.bgColor }}
-                >
-                  {uni.shortCode.split(' ')[0]}
-                </div>
-                <div>
-                  <h4 className="font-bold text-[#1E3A8A] dark:text-blue-400 text-sm leading-tight">{uni.name}</h4>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-[180px]">{uni.fullName}</p>
-                </div>
-              </div>
-
-              <button
-                onClick={() => {
-                  setSelectedSubject(SUBJECTS_DATA[0]);
-                  setSelectedCategory('varsity_a');
-                }}
-                className="px-3 py-1.5 bg-[#2563EB] hover:bg-blue-600 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer shadow-2xs"
-              >
-                প্রশ্ন দেখুন
-              </button>
-            </div>
-          ))}
-        </div>
+        <InstitutionCardGrid
+          institutions={filteredInstitutions}
+          onSelectInstitution={(inst) => setSelectedInstitution(inst)}
+        />
       )}
 
       {/* Tab Content: মডেল টেস্ট (Model Tests) */}
